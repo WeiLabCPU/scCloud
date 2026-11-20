@@ -24,8 +24,8 @@
 ## 一键启动
 
 ```bash
-git clone https://github.com/zyzhou-saffron/sccloud.git
-cd sccloud
+git clone https://github.com/WeiLabCPU/scCloud.git
+cd scCloud
 sh ./start.sh
 ```
 

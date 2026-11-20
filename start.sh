@@ -187,7 +187,7 @@ image_exists_locally() {
 ensure_r_engine_image() {
   # shellcheck disable=SC1091
   [ -f .env ] && . ./.env
-  R_IMG="${R_ENGINE_IMAGE:-ghcr.io/zyzhou-saffron/sccloud-r-engine:latest}"
+  R_IMG="${R_ENGINE_IMAGE:-ghcr.io/cangiolo/sccloud-r-engine:latest}"
 
   if image_exists_locally "$R_IMG"; then
     ok "本地已有 R 镜像：$R_IMG"
@@ -418,9 +418,9 @@ build_ok=0
 images_ready() {
   missing=0
   for img in \
-    "${FRONTEND_IMAGE:-ghcr.io/zyzhou-saffron/sccloud-frontend:latest}" \
-    "${BACKEND_IMAGE:-ghcr.io/zyzhou-saffron/sccloud-backend:latest}" \
-    "${R_ENGINE_IMAGE:-ghcr.io/zyzhou-saffron/sccloud-r-engine:latest}"
+    "${FRONTEND_IMAGE:-ghcr.io/cangiolo/sccloud-frontend:latest}" \
+    "${BACKEND_IMAGE:-ghcr.io/cangiolo/sccloud-backend:latest}" \
+    "${R_ENGINE_IMAGE:-ghcr.io/cangiolo/sccloud-r-engine:latest}"
   do
     if ! image_exists_locally "$img"; then
       warn "缺少镜像：$img"

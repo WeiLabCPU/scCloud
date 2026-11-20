@@ -10,7 +10,7 @@ FROM rocker/r-ver:4.3.2
 
 LABEL maintainer="scCloud Team"
 LABEL description="scCloud v2 R Compute Engine — Seurat + Plumber API"
-LABEL org.opencontainers.image.source="https://github.com/zyzhou-saffron/sccloud"
+LABEL org.opencontainers.image.source="https://github.com/WeiLabCPU/scCloud"
 LABEL org.opencontainers.image.description="scCloud R compute engine (Seurat + Plumber + worker)"
 
 # ===== 系统依赖 =====

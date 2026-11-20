@@ -4,7 +4,7 @@
 # 用法:
 #   sh ./scripts/publish-r-engine-version.sh v1.1.0
 #   sh ./scripts/publish-r-engine-version.sh 1.1.0
-#   SOURCE=ghcr.io/zyzhou-saffron/sccloud-r-engine:5308110 \
+#   SOURCE=ghcr.io/cangiolo/sccloud-r-engine:5308110 \
 #     sh ./scripts/publish-r-engine-version.sh v1.1.0
 #   sh ./scripts/publish-r-engine-version.sh v1.1.0 --also-latest
 #   sh ./scripts/publish-r-engine-version.sh v1.1.0 --dry-run
@@ -15,12 +15,12 @@
 #   - 不替代 FE/BE 的 docker-publish；也不上传 Release 大 tar
 #
 # 环境变量:
-#   IMAGE   目标仓库，默认 ghcr.io/zyzhou-saffron/sccloud-r-engine
+#   IMAGE   目标仓库，默认 ghcr.io/cangiolo/sccloud-r-engine
 #   SOURCE  源引用，默认 ${IMAGE}:latest
 
 set -eu
 
-IMAGE="${IMAGE:-ghcr.io/zyzhou-saffron/sccloud-r-engine}"
+IMAGE="${IMAGE:-ghcr.io/cangiolo/sccloud-r-engine}"
 SOURCE="${SOURCE:-${IMAGE}:latest}"
 ALSO_LATEST=0
 DRY_RUN=0

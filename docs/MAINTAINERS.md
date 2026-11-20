@@ -31,9 +31,9 @@
 
 | 镜像 | 说明 |
 |------|------|
-| `ghcr.io/zyzhou-saffron/sccloud-frontend` | CI 推送，**只打 linux/amd64**（arm64 在 QEMU 里 Next 静态生成会 SIGILL） |
-| `ghcr.io/zyzhou-saffron/sccloud-backend` | CI 推送，**amd64 + arm64** |
-| `ghcr.io/zyzhou-saffron/sccloud-r-engine` | 不进 FE/BE 的 publish workflow；本机/GPU 有 `r-library` 再 build、push（token 要 `write:packages`） |
+| `ghcr.io/cangiolo/sccloud-frontend` | CI 推送，**只打 linux/amd64**（arm64 在 QEMU 里 Next 静态生成会 SIGILL） |
+| `ghcr.io/cangiolo/sccloud-backend` | CI 推送，**amd64 + arm64** |
+| `ghcr.io/cangiolo/sccloud-r-engine` | 不进 FE/BE 的 publish workflow；本机/GPU 有 `r-library` 再 build、push（token 要 `write:packages`） |
 
 | 何时 | tag |
 |------|-----|
@@ -41,12 +41,16 @@
 | GitHub Release（Release Please 合并后） | 再加 `vX.Y.Z`、`X.Y.Z` |
 | Actions 手动 `workflow_dispatch` | FE/BE 都建 `latest` + SHA |
 
+当前**拉取默认**镜像在个人命名空间 `ghcr.io/cangiolo/...`（账号由 `zyzhou-saffron` 更名后，包仍在个人名下且已是 Public，可匿名拉取）。
+
+仓库转到组织 `WeiLabCPU` 后，`github.repository_owner` 现为 `WeiLabCPU`。CI（`.github/workflows/docker-publish.yml`）仍硬编码 `GHCR_OWNER: zyzhou-saffron`；组织仓库的 `GITHUB_TOKEN` 也不能向个人 `cangiolo` 命名空间推送。在组织 Owner 开放 Packages 并完成迁移（路线 B）之前，不要把 CI 改成跨命名空间推送；路线 B 应将 `GHCR_OWNER` 改为 `${{ github.repository_owner }}`（即 `WeiLabCPU`）。
+
 包建议 Public。可选 ACR：Variables/Secrets 配 `ALIYUN_ACR_*`，CI 用 `buildx imagetools` mirror（backend 多架构，frontend 仅 amd64）。
 
 推 R 镜像时加 OCI label，才会出现在仓库 Packages 页：
 
 ```dockerfile
-LABEL org.opencontainers.image.source="https://github.com/zyzhou-saffron/sccloud"
+LABEL org.opencontainers.image.source="https://github.com/WeiLabCPU/scCloud"
 ```
 
 ## 发版（Release Please）
@@ -66,8 +70,8 @@ LABEL org.opencontainers.image.source="https://github.com/zyzhou-saffron/sccloud
 
 ```bash
 cp -r /path/to/R/library r-engine/r-library
-docker build -t ghcr.io/zyzhou-saffron/sccloud-r-engine:latest ./r-engine
-docker push ghcr.io/zyzhou-saffron/sccloud-r-engine:latest
+docker build -t ghcr.io/cangiolo/sccloud-r-engine:latest ./r-engine
+docker push ghcr.io/cangiolo/sccloud-r-engine:latest
 ```
 
 从零装包约两小时：Dockerfile 用 `install_packages.R` 代替 `COPY r-library/`。

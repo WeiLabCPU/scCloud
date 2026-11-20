@@ -57,7 +57,7 @@ services:
 
   frontend:
     <<: *service-defaults
-    image: ${FRONTEND_IMAGE:-ghcr.io/zyzhou-saffron/sccloud-frontend:latest}
+    image: ${FRONTEND_IMAGE:-ghcr.io/cangiolo/sccloud-frontend:latest}
     build:
       context: ./frontend
       # 共享机/rootless 容器 DNS 常挂；host 网络让 apt/npm 走宿主机解析
@@ -83,7 +83,7 @@ services:
 
   backend:
     <<: *service-defaults
-    image: ${BACKEND_IMAGE:-ghcr.io/zyzhou-saffron/sccloud-backend:latest}
+    image: ${BACKEND_IMAGE:-ghcr.io/cangiolo/sccloud-backend:latest}
     build:
       context: ./backend
       network: host
@@ -144,7 +144,7 @@ services:
 
   r-engine:
     <<: *service-defaults
-    image: ${R_ENGINE_IMAGE:-ghcr.io/zyzhou-saffron/sccloud-r-engine:latest}
+    image: ${R_ENGINE_IMAGE:-ghcr.io/cangiolo/sccloud-r-engine:latest}
     build:
       context: ./r-engine
       dockerfile: Dockerfile
@@ -179,7 +179,7 @@ services:
 
   r-engine-worker:
     <<: *service-defaults
-    image: ${R_ENGINE_IMAGE:-ghcr.io/zyzhou-saffron/sccloud-r-engine:latest}
+    image: ${R_ENGINE_IMAGE:-ghcr.io/cangiolo/sccloud-r-engine:latest}
     build:
       context: ./r-engine
       dockerfile: Dockerfile
