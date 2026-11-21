@@ -12,6 +12,7 @@ import { OrthographicView } from "@deck.gl/core";
 import { ScatterplotLayer } from "@deck.gl/layers";
 import DeckGL from "@deck.gl/react";
 import { authedFetch } from "../lib/api";
+import ImageLightbox from "./ImageLightbox";
 
 /* 样本色板 — 与 DeckScatterPlot 一致 */
 const SAMPLE_PALETTE: [number, number, number][] = [
@@ -53,7 +54,6 @@ interface UmiRow {
 
 interface QCResult {
   status: string[];
-  result_path: string[];
   stats: {
     // 后端 _unbox_r_scalars 会把 R 的 [1888] 解包成标量 1888；旧数据可能仍是数组，故兼容两者
     total_cells_before: number | number[];
@@ -133,17 +133,38 @@ function AuthImg({ src, alt, token, className, style }: {
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
   const [isPdf, setIsPdf] = useState(false);
+  const [lightboxOpen, setLightboxOpen] = useState(false);
 
   useEffect(() => {
     if (!src) return;
+    const controller = new AbortController();
     let objectUrl = "";
     setFailed(false);
     setBlobUrl(null);
-    authedFetch(src)
-      .then((r) => { if (!r.ok) throw new Error(`${r.status}`); const ct = r.headers.get("content-type") || ""; return r.blob().then(blob => ({ blob, isPdf: ct.includes("pdf") })); })
-      .then(({ blob, isPdf: pdf }) => { const url = URL.createObjectURL(blob); setBlobUrl(url); setIsPdf(pdf); })
-      .catch(() => setFailed(true));
-    return () => { if (objectUrl) URL.revokeObjectURL(objectUrl); };
+    setLightboxOpen(false);
+    authedFetch(src, { signal: controller.signal })
+      .then((r) => {
+        if (!r.ok) throw new Error(`${r.status}`);
+        const ct = r.headers.get("content-type") || "";
+        return r.blob().then((blob) => ({ blob, isPdf: ct.includes("pdf") }));
+      })
+      .then(({ blob, isPdf: pdf }) => {
+        const url = URL.createObjectURL(blob);
+        if (controller.signal.aborted) {
+          URL.revokeObjectURL(url);
+          return;
+        }
+        objectUrl = url;
+        setBlobUrl(url);
+        setIsPdf(pdf);
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setFailed(true);
+      });
+    return () => {
+      controller.abort();
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
   }, [src, token]);
 
   if (!src || failed) return <div className="callout text-xs py-6 text-center" style={{ color: "var(--clr-text-faint)" }}>图片暂不可用</div>;
@@ -151,8 +172,25 @@ function AuthImg({ src, alt, token, className, style }: {
   if (isPdf) {
     return <embed src={blobUrl} type="application/pdf" className={className} style={{ ...style, width: "100%", minHeight: 600 }} />;
   }
-  // eslint-disable-next-line @next/next/no-img-element
-  return <img src={blobUrl} alt={alt} className={className} style={style} />;
+  return (
+    <>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={blobUrl}
+        alt={alt}
+        className={className}
+        style={{ cursor: "zoom-in", ...style }}
+        title="点击放大查看（滚轮缩放 / 拖拽平移）"
+        onClick={() => setLightboxOpen(true)}
+      />
+      <ImageLightbox
+        src={blobUrl}
+        alt={alt}
+        open={lightboxOpen}
+        onClose={() => setLightboxOpen(false)}
+      />
+    </>
+  );
 }
 
 // ===== Tab 定义 =====
@@ -176,14 +214,26 @@ export default function QCResultTabs({ taskId, token }: QCResultTabsProps) {
   const [error, setError] = useState("");
 
   useEffect(() => {
+    const controller = new AbortController();
+    setLoading(true);
+    setError("");
     const path = `/api/tasks/${taskId}/result`;
-    authedFetch(path)
+    authedFetch(path, { signal: controller.signal })
       .then((res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json();
       })
-      .then((d) => { setData(d); setLoading(false); })
-      .catch((e) => { setError(e.message); setLoading(false); });
+      .then((d) => {
+        if (controller.signal.aborted) return;
+        setData(d);
+        setLoading(false);
+      })
+      .catch((e) => {
+        if (controller.signal.aborted) return;
+        setError(e.message);
+        setLoading(false);
+      });
+    return () => controller.abort();
   }, [taskId, token]);
 
   const handleDownload = async (plotPath: unknown, fallbackName: string) => {
@@ -548,7 +598,7 @@ function CorrScatterPanel({ xData, yData, samples, xLabel, yLabel, corr }: CorrS
     const cx = VISUAL_RANGE / 2;
     const cy = VISUAL_RANGE / 2;
     const zoom = Math.log2(380 / VISUAL_RANGE) - 0.3;
-    return { target: [cx, cy], zoom: Math.max(-2, Math.min(zoom, 10)) };
+    return { target: [cx, cy] as [number, number], zoom: Math.max(-2, Math.min(zoom, 10)) };
   }, []);
 
   const onHover = useCallback((info: { x: number; y: number; object?: unknown }) => {

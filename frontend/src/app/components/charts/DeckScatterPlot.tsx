@@ -11,7 +11,7 @@
  */
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { OrthographicView } from "@deck.gl/core";
 import { ScatterplotLayer } from "@deck.gl/layers";
 import DeckGL from "@deck.gl/react";
@@ -104,7 +104,7 @@ const PALETTES: Record<string, { name: string; colors: [number, number, number][
 const DEFAULT_PALETTE = "tol";
 
 /* ── CellXgene 风格侧边栏图例 ── */
-function LegendSidebar({
+const LegendSidebar = memo(function LegendSidebar({
   availableGroups, colorBy, setColorBy, paletteKey, setPaletteKey,
   clusters, colorMap, hiddenClusters, toggleCluster, data,
   mergeMode, selectedForMerge, onToggleMerge, mergeIdKey = "celltype",
@@ -165,8 +165,35 @@ function LegendSidebar({
     return result;
   }, [availableGroups, data]);
 
-  // 将平行数组转为点对象数组（merge 选择时需要）
-  const points = useMemo(() => toPoints(data), [data]);
+  // 预计算 colorBy 值 → 关联的 mergeIdKey 值列表（O(N) 单遍建索引，避免悬停时 O(clusters×cells) 重算）
+  const mergeIdsByVal = useMemo(() => {
+    const map = new Map<string, string[]>();
+    if (!data || mergeIdKey === colorBy) return map;
+    const colArr = (
+      colorBy === "celltype"
+        ? (data.celltype ?? data.cluster)
+        : (data as unknown as Record<string, string[] | undefined>)[colorBy]
+    ) ?? [];
+    const targetArr = (
+      mergeIdKey === "celltype" ? (data.celltype ?? data.cluster) : data.cluster
+    ) ?? [];
+    const tmp = new Map<string, Set<string>>();
+    for (let i = 0; i < data.x.length; i++) {
+      const k = colArr[i] ?? (colorBy === "cluster" || colorBy === "celltype" ? data.cluster[i] : "");
+      const target = targetArr[i] ?? data.cluster[i];
+      if (k == null || target == null) continue;
+      let set = tmp.get(k);
+      if (!set) {
+        set = new Set<string>();
+        tmp.set(k, set);
+      }
+      set.add(target);
+    }
+    tmp.forEach((set, k) => {
+      map.set(k, Array.from(set));
+    });
+    return map;
+  }, [data, colorBy, mergeIdKey]);
 
   const isMergeActive = selectedForMerge && selectedForMerge.size > 0;
 
@@ -312,7 +339,7 @@ function LegendSidebar({
                     // For merge selection: check by mergeIdKey
                     // If mergeIdKey="cluster", need to check if any cluster with this celltype is selected
                     const mergeIdsForVal = mergeIdKey !== colorBy
-                      ? points.filter(p => (p[colorBy as keyof typeof p] as string) === v).map(p => p[mergeIdKey])
+                      ? (mergeIdsByVal.get(v) || [])
                       : [v];
                     const isMergeSelected = isActive && mergeIdsForVal.some(id => selectedForMerge?.has(id));
                     return (
@@ -381,7 +408,7 @@ function LegendSidebar({
       </div>
     </div>
   );
-}
+});
 
 interface DeckScatterPlotProps {
   data: ScatterData | null;
@@ -464,7 +491,7 @@ export default function DeckScatterPlot({
   // 旧数据没有 celltype 字段时，cluster 里存的其实是 CellType 标签，动态改标签
   const availableGroups = useMemo(() => {
     if (!data) return [];
-    const d = data as Record<string, unknown>;
+    const d = data as unknown as Record<string, unknown>;
     const ct = d.celltype;
     const cl = d.cluster;
     const hasCelltype = !!ct && Array.isArray(ct);
@@ -537,10 +564,17 @@ export default function DeckScatterPlot({
     return map;
   }, [clusters, currentPalette]);
 
-  // 计算数据边界 → 初始视口
-  const initialViewState = useMemo(() => {
+  // 计算数据边界 → 初始视口（支持 PCA 等宽坐标轴的负 zoom，并动态放开 minZoom）
+  type OrthoViewState = {
+    target: [number, number, number];
+    zoom: number;
+    minZoom: number;
+    maxZoom: number;
+  };
+
+  const initialViewState = useMemo<OrthoViewState>(() => {
     if (!data || data.x.length === 0) {
-      return { target: [0, 0], zoom: 1 };
+      return { target: [0, 0, 0], zoom: 1, minZoom: -6, maxZoom: 12 };
     }
     let minX = Infinity, maxX = -Infinity;
     let minY = Infinity, maxY = -Infinity;
@@ -557,12 +591,25 @@ export default function DeckScatterPlot({
     const maxRange = Math.max(rangeX, rangeY);
     // zoom 公式：log2(视口像素 / 数据范围)
     const zoom = Math.log2(Math.min(600, height) / maxRange) - 0.3;
-    return { target: [cx, cy], zoom: Math.max(-2, Math.min(zoom, 10)) };
+    const clampedZoom = Math.max(-8, Math.min(zoom, 10));
+    return {
+      target: [cx, cy, 0],
+      zoom: clampedZoom,
+      minZoom: Math.min(-4, Math.floor(clampedZoom) - 2),
+      maxZoom: 12,
+    };
   }, [data, height]);
 
-  // 可控视口状态（用于重置）
-  const [viewState, setViewState] = useState(initialViewState);
+  // 可控视口状态（用于重置，并在数据/降维方法切换时同步初始视口）
+  const [viewState, setViewState] = useState<OrthoViewState>(initialViewState);
+  useEffect(() => {
+    setViewState(initialViewState);
+  }, [initialViewState]);
   const resetView = useCallback(() => setViewState(initialViewState), [initialViewState]);
+  const handleSetColorBy = useCallback((v: string) => {
+    setColorBy(v);
+    setHiddenClusters(new Set());
+  }, []);
 
   // 获取当前分组值的辅助函数
   const getGroupValue = useCallback((p: { cluster: string; celltype: string; sample: string; group: string }) => {
@@ -673,9 +720,9 @@ export default function DeckScatterPlot({
           ref={deckRef}
           views={new OrthographicView({})}
           viewState={viewState}
-          controller={{ minZoom: 0, maxZoom: 8 }}
+          controller={true}
           layers={layers}
-          onViewStateChange={({ viewState: vs }: { viewState: Record<string, unknown> }) => setViewState(vs)}
+          onViewStateChange={({ viewState: vs }) => setViewState(vs as OrthoViewState)}
           style={{ position: "relative", width: "100%", height: "100%" }}
         />
 
@@ -728,7 +775,7 @@ export default function DeckScatterPlot({
       <LegendSidebar
         availableGroups={availableGroups}
         colorBy={colorBy}
-        setColorBy={(v) => { setColorBy(v); setHiddenClusters(new Set()); }}
+        setColorBy={handleSetColorBy}
         paletteKey={paletteKey}
         setPaletteKey={setPaletteKey}
         clusters={clusters}

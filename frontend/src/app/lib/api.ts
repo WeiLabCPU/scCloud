@@ -706,6 +706,26 @@ export async function inspectFileByPath(filePath: string): Promise<InspectResult
   });
 }
 
+export interface ConvertImportResult {
+  status: string;
+  project_id: number;
+  filename: string;
+  path: string;
+  size_mb: number;
+  sample_groups: Record<string, string>;
+}
+
+export async function importConvertedToProject(data: {
+  source_path: string;
+  project_id: number;
+  filename?: string;
+}): Promise<ConvertImportResult> {
+  return apiFetch<ConvertImportResult>("/api/convert/import-to-project", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
 
 // ===== 管理员 API =====
 

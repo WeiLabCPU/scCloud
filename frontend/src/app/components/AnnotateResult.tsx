@@ -1141,6 +1141,11 @@ export default function AnnotateResult({
           </p>
           <button
             onClick={() => {
+              const escapeCsvCell = (val: unknown): string => {
+                if (val === null || val === undefined) return "";
+                const s = String(val);
+                return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+              };
               const header = ["CellType", "原始注释", ...freqHeaders];
               const csvRows = freqRows.map(r => [
                 r.celltype,
@@ -1152,7 +1157,10 @@ export default function AnnotateResult({
                 })(),
                 ...freqHeaders.map(s => r[s]),
               ]);
-              const csv = [header.join(","), ...csvRows.map(r => r.join(","))].join("\n");
+              const csv = [
+                header.map(escapeCsvCell).join(","),
+                ...csvRows.map(r => r.map(escapeCsvCell).join(",")),
+              ].join("\n");
               const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" });
               const url = URL.createObjectURL(blob);
               const a = document.createElement("a");

@@ -18,6 +18,7 @@ import QCResultTabs from "./QCResultTabs";
 import MultiSelectDropdown from "./MultiSelectDropdown";
 import GeneAutocomplete from "./GeneAutocomplete";
 import AnnotateResult from "./AnnotateResult";
+import ImageLightbox from "./ImageLightbox";
 import {
   ScatterPlot,
   DeckScatterPlot,
@@ -84,6 +85,16 @@ function safeString(val: unknown): string | undefined {
   return undefined;
 }
 
+/** RFC 4180 CSV 单元格转义 */
+function escapeCsvCell(val: unknown): string {
+  if (val === null || val === undefined) return "";
+  const s = String(val);
+  if (/[",\r\n]/.test(s)) {
+    return `"${s.replace(/"/g, '""')}"`;
+  }
+  return s;
+}
+
 /** 随机降采样散点数据到 maxN 个点，防止大数据集导致渲染崩溃 */
 function downsampleScatter(data: ScatterData, maxN = 3000): ScatterData {
   if (data.x.length <= maxN) return data;
@@ -123,6 +134,7 @@ function AuthImg({ src, alt, className, style }: {
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [failed, setFailed]   = useState(false);
   const [isPdf, setIsPdf] = useState(false);
+  const [lightboxOpen, setLightboxOpen] = useState(false);
 
   useEffect(() => {
     if (!src) return;
@@ -130,6 +142,7 @@ function AuthImg({ src, alt, className, style }: {
     let objectUrl = "";
     setFailed(false);
     setBlobUrl(null);
+    setLightboxOpen(false);
     authedFetch(src, { signal: controller.signal })
       .then((r) => {
         if (!r.ok) throw new Error(`${r.status}`);
@@ -137,9 +150,13 @@ function AuthImg({ src, alt, className, style }: {
         return r.blob().then((blob) => ({ blob, isPdf: ct.includes("pdf") }));
       })
       .then(({ blob, isPdf: pdf }) => {
-        if (controller.signal.aborted) return;
-        objectUrl = URL.createObjectURL(blob);
-        setBlobUrl(objectUrl);
+        const url = URL.createObjectURL(blob);
+        if (controller.signal.aborted) {
+          URL.revokeObjectURL(url);
+          return;
+        }
+        objectUrl = url;
+        setBlobUrl(url);
         setIsPdf(pdf);
       })
       .catch(() => {
@@ -156,8 +173,25 @@ function AuthImg({ src, alt, className, style }: {
   if (isPdf) {
     return <embed src={blobUrl} type="application/pdf" className={className} style={{ ...style, width: "100%", minHeight: 600 }} />;
   }
-  // eslint-disable-next-line @next/next/no-img-element
-  return <img src={blobUrl} alt={alt} className={className} style={style} />;
+  return (
+    <>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={blobUrl}
+        alt={alt}
+        className={className}
+        style={{ cursor: "zoom-in", ...style }}
+        title="点击放大查看（滚轮缩放 / 拖拽平移）"
+        onClick={() => setLightboxOpen(true)}
+      />
+      <ImageLightbox
+        src={blobUrl}
+        alt={alt}
+        open={lightboxOpen}
+        onClose={() => setLightboxOpen(false)}
+      />
+    </>
+  );
 }
 
 /** 
@@ -792,15 +826,16 @@ function ClusterResult({ data, task }: { data: Record<string, unknown> | null; t
               onClick={() => {
                 if (clusterNum.length === 0) { alert("暂无聚类统计数据"); return; }
                 try {
-                const hdr = Object.keys(clusterNum[0]).join(",");
-                const rows = clusterNum.map((r) => Object.values(r).join(","));
-                const csv = [hdr, ...rows].join("\n");
+                const cols = Object.keys(clusterNum[0]);
+                const hdr = cols.map(escapeCsvCell).join(",");
+                const rows = clusterNum.map((r) => cols.map((k) => escapeCsvCell((r as Record<string, unknown>)[k])).join(","));
+                const csv = "\uFEFF" + [hdr, ...rows].join("\n");
                 const rp = data?.result_path;
                 const now2 = new Date();
                 const ts2 = `${now2.getFullYear()}${String(now2.getMonth()+1).padStart(2,"0")}${String(now2.getDate()).padStart(2,"0")}`;
                 const baseName = (typeof rp === "string" ? rp.split("/").pop()?.replace(/\.rds$/, "") : "") || "cluster";
                 const name = `${baseName}_cluster_num_${ts2}.csv`;
-                const blob = new Blob([csv], {type: "text/csv"});
+                const blob = new Blob([csv], {type: "text/csv;charset=utf-8"});
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement("a");
                 a.href = url;
@@ -821,15 +856,16 @@ function ClusterResult({ data, task }: { data: Record<string, unknown> | null; t
               onClick={() => {
                 if (freqTable.length === 0) { alert("暂无频率表数据"); return; }
                 try {
-                const hdr = Object.keys(freqTable[0]).join(",");
-                const rows = freqTable.map((r) => Object.values(r).join(","));
-                const csv = [hdr, ...rows].join("\n");
+                const cols = Object.keys(freqTable[0]);
+                const hdr = cols.map(escapeCsvCell).join(",");
+                const rows = freqTable.map((r) => cols.map((k) => escapeCsvCell((r as Record<string, unknown>)[k])).join(","));
+                const csv = "\uFEFF" + [hdr, ...rows].join("\n");
                 const rp = data?.result_path;
                 const now3 = new Date();
                 const ts3 = `${now3.getFullYear()}${String(now3.getMonth()+1).padStart(2,"0")}${String(now3.getDate()).padStart(2,"0")}`;
                 const baseName2 = (typeof rp === "string" ? rp.split("/").pop()?.replace(/\.rds$/, "") : "") || "cluster";
                 const name = `${baseName2}_freq_table_${ts3}.csv`;
-                const blob = new Blob([csv], {type: "text/csv"});
+                const blob = new Blob([csv], {type: "text/csv;charset=utf-8"});
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement("a");
                 a.href = url;
@@ -1157,11 +1193,72 @@ function MarkersResult({ task, data, taskCache, clusterLevels: parentClusterLeve
     return [...ordered, ...rest];
   }, [topGenes]);
 
-  // 分页
+  // 筛选与排序辅助函数
+  const [tab1Search, setTab1Search] = useState("");
+  const [tab1Sort, setTab1Sort] = useState<{ key: string; dir: "asc" | "desc" } | null>(null);
+  const [tab4Search, setTab4Search] = useState("");
+  const [tab4Sort, setTab4Sort] = useState<{ key: string; dir: "asc" | "desc" } | null>(null);
+
+  const filterAndSortRows = (
+    rows: GeneRow[],
+    query: string,
+    sortSpec: { key: string; dir: "asc" | "desc" } | null,
+  ): GeneRow[] => {
+    const q = query.trim().toLowerCase();
+    const filtered = q
+      ? rows.filter((r) =>
+          ["gene", "gene_id", "Cluster", "CellType"].some((k) => {
+            const v = r[k];
+            return v !== null && v !== undefined && String(v).toLowerCase().includes(q);
+          }),
+        )
+      : rows;
+    if (!sortSpec) return filtered;
+    const { key, dir } = sortSpec;
+    return [...filtered].sort((a, b) => {
+      const va = a[key];
+      const vb = b[key];
+      const emptyA = va === null || va === undefined || va === "";
+      const emptyB = vb === null || vb === undefined || vb === "";
+      if (emptyA && emptyB) return 0;
+      if (emptyA) return 1;
+      if (emptyB) return -1;
+      const na = typeof va === "number" ? va : Number(va);
+      const nb = typeof vb === "number" ? vb : Number(vb);
+      if (Number.isFinite(na) && Number.isFinite(nb)) {
+        return dir === "asc" ? na - nb : nb - na;
+      }
+      const cmp = String(va).localeCompare(String(vb), undefined, {
+        numeric: true,
+        sensitivity: "base",
+      });
+      return dir === "asc" ? cmp : -cmp;
+    });
+  };
+
+  const toggleSort = (
+    current: { key: string; dir: "asc" | "desc" } | null,
+    key: string,
+  ): { key: string; dir: "asc" | "desc" } => {
+    if (current?.key === key) {
+      return { key, dir: current.dir === "asc" ? "desc" : "asc" };
+    }
+    const defaultDesc = key === "avg_log2FC" || key === "pct.1" || key === "pct.2";
+    return { key, dir: defaultDesc ? "desc" : "asc" };
+  };
+
+  // 分页（在筛选与排序后切页）
   const [genePage, setGenePage] = useState(0);
   const genePageSize = 10;
-  const genePageData = topGenes.slice(genePage * genePageSize, (genePage + 1) * genePageSize);
-  const geneTotalPages = Math.ceil(topGenes.length / genePageSize);
+  const filteredTopGenes = useMemo(
+    () => filterAndSortRows(topGenes, tab1Search, tab1Sort),
+    [topGenes, tab1Search, tab1Sort],
+  );
+  useEffect(() => {
+    setGenePage(0);
+  }, [tab1Search, tab1Sort]);
+  const genePageData = filteredTopGenes.slice(genePage * genePageSize, (genePage + 1) * genePageSize);
+  const geneTotalPages = Math.ceil(filteredTopGenes.length / genePageSize);
 
   // 从 API 响应中动态提取图片文件名
   const dotplotPath = safeString(data?.plot_path);
@@ -1403,33 +1500,84 @@ function MarkersResult({ task, data, taskCache, clusterLevels: parentClusterLeve
             )}
             {topGenes.length > 0 ? (
               <div className="space-y-2">
-                <div className="card-label">
-                  差异基因预览
-                  <span className="font-normal ml-1" style={{ color: "var(--clr-text-faint)" }}>
-                    — 显示前 {topGenes.length} 行
-                  </span>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="card-label">
+                    差异基因预览
+                    <span className="font-normal ml-1" style={{ color: "var(--clr-text-faint)" }}>
+                      — {tab1Search.trim() ? `匹配 ${filteredTopGenes.length} / ${topGenes.length} 行` : `显示前 ${topGenes.length} 行`}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="text"
+                      value={tab1Search}
+                      onChange={(e) => setTab1Search(e.target.value)}
+                      placeholder="搜索基因名 / Gene ID / 聚类..."
+                      className="text-xs px-2.5 py-1 rounded border bg-white focus:outline-none"
+                      style={{ borderColor: "var(--clr-border)", color: "var(--clr-text)", width: 210 }}
+                    />
+                    {tab1Search && (
+                      <button
+                        type="button"
+                        onClick={() => setTab1Search("")}
+                        className="text-xs px-2 py-1 rounded hover:bg-stone-100"
+                        style={{ color: "var(--clr-text-muted)" }}
+                        title="清除筛选"
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
                 </div>
                 <div className="table-wrap" style={{ maxWidth: "100%", overflowX: "auto" }}>
                   <table style={{ fontSize: "0.7rem" }}>
                     <thead>
-                      <tr>{geneCols.map(c => <th key={c} style={{ whiteSpace: "nowrap" }}>{c.toUpperCase()}</th>)}</tr>
+                      <tr>
+                        {geneCols.map((c) => {
+                          const active = tab1Sort?.key === c;
+                          return (
+                            <th
+                              key={c}
+                              onClick={() => setTab1Sort((prev) => toggleSort(prev, c))}
+                              style={{ whiteSpace: "nowrap", cursor: "pointer", userSelect: "none" }}
+                              title="点击按此列排序"
+                            >
+                              {c.toUpperCase()}
+                              <span className="ml-1 opacity-70">
+                                {active ? (tab1Sort?.dir === "asc" ? "↑" : "↓") : "↕"}
+                              </span>
+                            </th>
+                          );
+                        })}
+                      </tr>
                     </thead>
                     <tbody>
-                      {genePageData.map((row, i) => (
-                        <tr key={i}>
-                          {geneCols.map(c => (
-                            <td key={c} style={{
-                              whiteSpace: "nowrap",
-                              maxWidth: "180px",
-                              overflow: "hidden",
-                              textOverflow: "ellipsis",
-                              ...(c === "gene_id" ? { fontFamily: "var(--font-mono)", color: "var(--clr-amber-dark)" } : {}),
-                            }}>
-                              {fmtCell(row[c])}
-                            </td>
-                          ))}
+                      {genePageData.length > 0 ? (
+                        genePageData.map((row, i) => (
+                          <tr key={i}>
+                            {geneCols.map((c) => (
+                              <td
+                                key={c}
+                                style={{
+                                  whiteSpace: "nowrap",
+                                  maxWidth: "180px",
+                                  overflow: "hidden",
+                                  textOverflow: "ellipsis",
+                                  ...(c === "gene_id" ? { fontFamily: "var(--font-mono)", color: "var(--clr-amber-dark)" } : {}),
+                                }}
+                              >
+                                {fmtCell(row[c])}
+                              </td>
+                            ))}
+                          </tr>
+                        ))
+                      ) : (
+                        <tr>
+                          <td colSpan={Math.max(1, geneCols.length)} className="text-center py-4" style={{ color: "var(--clr-text-faint)" }}>
+                            未找到匹配的差异基因
+                          </td>
                         </tr>
-                      ))}
+                      )}
                     </tbody>
                   </table>
                 </div>
@@ -1707,6 +1855,7 @@ function MarkersResult({ task, data, taskCache, clusterLevels: parentClusterLeve
              {tab4TaskId && !tab4Loading && !tab4Error && tab4Data && (() => {
                 const appliedG1 = tab4AppliedPair?.g1 ?? tab4G1;
                 const appliedG2 = tab4AppliedPair?.g2 ?? tab4G2;
+                const filteredTab4Data = filterAndSortRows(tab4Data, tab4Search, tab4Sort);
                 const tab4Cols = tab4Data.length > 0
                   ? (() => {
                       const allKeys = Array.from(new Set(tab4Data.flatMap(row => Object.keys(row))));
@@ -1735,31 +1884,84 @@ function MarkersResult({ task, data, taskCache, clusterLevels: parentClusterLeve
                     </div>
                   )}
                   <div className="space-y-2 mb-4">
-                    <div className="card-label">
-                      分组差异基因预览
-                      <span className="font-normal ml-1" style={{ color: "var(--clr-text-faint)" }}>— 显示前 {tab4Data.length} 行</span>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="card-label">
+                        分组差异基因预览
+                        <span className="font-normal ml-1" style={{ color: "var(--clr-text-faint)" }}>
+                          — {tab4Search.trim() ? `匹配 ${filteredTab4Data.length} / ${tab4Data.length} 行` : `显示前 ${tab4Data.length} 行`}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <input
+                          type="text"
+                          value={tab4Search}
+                          onChange={(e) => setTab4Search(e.target.value)}
+                          placeholder="搜索基因名 / Gene ID..."
+                          className="text-xs px-2.5 py-1 rounded border bg-white focus:outline-none"
+                          style={{ borderColor: "var(--clr-border)", color: "var(--clr-text)", width: 200 }}
+                        />
+                        {tab4Search && (
+                          <button
+                            type="button"
+                            onClick={() => setTab4Search("")}
+                            className="text-xs px-2 py-1 rounded hover:bg-stone-100"
+                            style={{ color: "var(--clr-text-muted)" }}
+                            title="清除筛选"
+                          >
+                            ✕
+                          </button>
+                        )}
+                      </div>
                     </div>
                     <div className="table-wrap" style={{ maxWidth: "100%", overflowX: "auto" }}>
                       <table style={{ fontSize: "0.7rem" }}>
                         <thead>
-                          <tr>{tab4Cols.map(c => <th key={c} style={{ whiteSpace: "nowrap" }}>{c.toUpperCase()}</th>)}</tr>
+                          <tr>
+                            {tab4Cols.map((c) => {
+                              const active = tab4Sort?.key === c;
+                              return (
+                                <th
+                                  key={c}
+                                  onClick={() => setTab4Sort((prev) => toggleSort(prev, c))}
+                                  style={{ whiteSpace: "nowrap", cursor: "pointer", userSelect: "none" }}
+                                  title="点击按此列排序"
+                                >
+                                  {c.toUpperCase()}
+                                  <span className="ml-1 opacity-70">
+                                    {active ? (tab4Sort?.dir === "asc" ? "↑" : "↓") : "↕"}
+                                  </span>
+                                </th>
+                              );
+                            })}
+                          </tr>
                         </thead>
                         <tbody>
-                          {tab4Data.map((row, i) => (
-                            <tr key={i}>
-                              {tab4Cols.map(c => (
-                                <td key={c} style={{
-                                  whiteSpace: "nowrap",
-                                  maxWidth: "180px",
-                                  overflow: "hidden",
-                                  textOverflow: "ellipsis",
-                                  ...(c === "gene_id" ? { fontFamily: "var(--font-mono)", color: "var(--clr-amber-dark)" } : {}),
-                                }}>
-                                  {fmtCell(row[c])}
-                                </td>
-                              ))}
+                          {filteredTab4Data.length > 0 ? (
+                            filteredTab4Data.map((row, i) => (
+                              <tr key={i}>
+                                {tab4Cols.map((c) => (
+                                  <td
+                                    key={c}
+                                    style={{
+                                      whiteSpace: "nowrap",
+                                      maxWidth: "180px",
+                                      overflow: "hidden",
+                                      textOverflow: "ellipsis",
+                                      ...(c === "gene_id" ? { fontFamily: "var(--font-mono)", color: "var(--clr-amber-dark)" } : {}),
+                                    }}
+                                  >
+                                    {fmtCell(row[c])}
+                                  </td>
+                                ))}
+                              </tr>
+                            ))
+                          ) : (
+                            <tr>
+                              <td colSpan={Math.max(1, tab4Cols.length)} className="text-center py-4" style={{ color: "var(--clr-text-faint)" }}>
+                                未找到匹配的差异基因
+                              </td>
                             </tr>
-                          ))}
+                          )}
                         </tbody>
                       </table>
                     </div>
@@ -1809,9 +2011,15 @@ function EnrichResult({ data, taskId }: { data: Record<string, unknown> | null; 
     ? `/api/tasks/${taskId}/plot?name=${encodeURIComponent(plotFileName)}`
     : null;
 
-  const csvFileName = plotFileName
-    ? plotFileName.replace("plot_enrich_", "enrich_").replace(".png", ".csv")
-    : null;
+  const directCsvPath = safeString(data?.csv_path);
+  const rawResultPath = safeString(data?.result_path);
+  const resultCsvName = rawResultPath && /\.csv$/i.test(rawResultPath) ? rawResultPath.split("/").pop() : null;
+  const csvFileName =
+    (directCsvPath ? directCsvPath.split("/").pop() : null) ||
+    resultCsvName ||
+    (plotFileName
+      ? plotFileName.replace("plot_enrich_", "enrich_").replace(/\.(png|pdf|svg|tiff?)$/i, ".csv")
+      : null);
   const csvSrc = csvFileName && taskId
     ? `/api/tasks/${taskId}/plot?name=${encodeURIComponent(csvFileName)}`
     : null;

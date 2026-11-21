@@ -1,8 +1,8 @@
 # scCloud 前端 UI/UX 与核心交互分级整改计划
 
 - **日期**：2026-11-20
-- **状态**：分批实施中 — Batch 1 实施中（已确认：1选方案A隐藏空壳按钮、2选方案B中英文字体子集全量本地打包、3先推进 Batch 1）
-- **基线**：`origin/main` @ `903379b`（PR #100–#103 部署加固与本地 `./data/projects` 存储改造已全部合入）
+- **状态**：分批实施中 — Batch 1（PR #104）已合入 `main` 并部署至本机 `:8091`；Batch 2（`feat/frontend-p2-viz-and-upload`）实施中
+- **基线**：`origin/main` @ `27f42ed`（PR #104 已合入）
 - **审计与核查范围**：
   - `frontend/src/` 全量 45 个源文件（约 15,756 行）；
   - 关联后端接口（[backend/app/auth/router.py](../../backend/app/auth/router.py)、[backend/app/convert/router.py](../../backend/app/convert/router.py)）；
