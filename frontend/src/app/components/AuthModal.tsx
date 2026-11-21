@@ -174,7 +174,6 @@ export default function AuthModal({
                   type="text" value={username} onChange={(e) => setUsername(e.target.value)}
                   placeholder={isLogin ? "请输入您的用户名或邮箱地址" : "字母、数字、下划线"} required
                   className="w-full px-3 py-2.5 text-sm focus:outline-none focus:ring-0" style={{ color: "var(--clr-text)", background: "#fff", WebkitTextFillColor: "var(--clr-text)", boxShadow: "0 0 0 30px #fff inset" }}
-                  style={{ color: "var(--clr-text)" }}
                 />
               </div>
             </div>
@@ -193,7 +192,6 @@ export default function AuthModal({
                   type="password" value={password} onChange={(e) => setPassword(e.target.value)}
                   placeholder={isLogin ? "请输入您的密码" : "至少 6 位"} required
                   className="w-full px-3 py-2.5 text-sm focus:outline-none focus:ring-0" style={{ color: "var(--clr-text)", background: "#fff", WebkitTextFillColor: "var(--clr-text)", boxShadow: "0 0 0 30px #fff inset" }}
-                  style={{ color: "var(--clr-text)" }}
                 />
               </div>
             </div>
@@ -213,7 +211,6 @@ export default function AuthModal({
                     type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)}
                     placeholder="再次输入密码" required
                     className="w-full px-3 py-2.5 text-sm focus:outline-none focus:ring-0" style={{ color: "var(--clr-text)", background: "#fff", WebkitTextFillColor: "var(--clr-text)", boxShadow: "0 0 0 30px #fff inset" }}
-                    style={{ color: "var(--clr-text)" }}
                   />
                 </div>
               </div>
@@ -241,7 +238,8 @@ export default function AuthModal({
             {isLogin ? (
               <>
                 <button
-                  onClick={() => { /* TODO: forgot password */ }}
+                  type="button"
+                  onClick={() => setError("如需重置密码，请联系系统管理员在「用户管理」后台操作")}
                   className="transition-colors hover:underline"
                   style={{ color: "var(--clr-text-muted)" }}
                 >

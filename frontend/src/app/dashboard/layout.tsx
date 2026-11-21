@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 import { IconBeaker, IconConvert, IconGear, IconUsers } from "../components/Icons";
-import { isGuest, ROLE_LABELS, getAuthToken, getAuthItem } from "../lib/api";
+import { isGuest, ROLE_LABELS, getAuthToken, getAuthItem, getCurrentUser } from "../lib/api";
 import AuthModal from "../components/AuthModal";
 
 /**
@@ -53,23 +53,25 @@ export default function DashboardLayout({
     }
     setUsername(name || "用户");
     setGuest(isGuest());
-    // 获取操作配额和角色
-    const token2 = getAuthToken();
-    if (token2) {
-      fetch("/api/auth/me", { headers: { Authorization: "Bearer " + token2 } })
-        .then(r => r.json())
-        .then(d => {
-          if (d.total_quota !== undefined) setQuotaInfo({ total: d.total_quota, used: d.used_quota });
+    // 获取操作配额和角色（通过 apiFetch 自动支持 401 续期并同步 navItems）
+    const syncUser = () => {
+      getCurrentUser()
+        .then((d) => {
+          setQuotaInfo({ total: d.total_quota, used: d.used_quota });
           if (d.retention_days) setRetentionDays(d.retention_days);
+          if (d.username) setUsername(d.username);
           if (d.role) {
             setUserRole(d.role);
-            const _sto = isGuest() ? sessionStorage : localStorage; _sto.setItem("role", d.role);
-            if (d.is_guest !== undefined) { const _sto2 = d.is_guest ? sessionStorage : localStorage; _sto2.setItem("is_guest", d.is_guest ? "true" : "false"); }
-            setGuest(d.is_guest || false);
+            const _sto = d.is_guest ? sessionStorage : localStorage;
+            _sto.setItem("role", d.role);
+            _sto.setItem("is_guest", d.is_guest ? "true" : "false");
+            setGuest(Boolean(d.is_guest));
+            setNavItems(d.role === "admin" ? [...NAV_ITEMS, ADMIN_NAV_ITEM] : NAV_ITEMS);
           }
         })
         .catch(() => {});
-    }
+    };
+    syncUser();
     const role = getAuthItem("role") || "user";
     setNavItems(role === "admin" ? [...NAV_ITEMS, ADMIN_NAV_ITEM] : NAV_ITEMS);
     if (pathname === "/dashboard") {
@@ -147,18 +149,16 @@ export default function DashboardLayout({
 
           {/* User area */}
           <div className="flex items-center gap-4">
-            {/* Common Icons for both modes */}
+            {/* Repository Link */}
             <div className="flex items-center gap-3 text-white/70 mr-1">
-              {/* Moon Icon */}
-              <button className="hover:text-[#FFD42A] transition-colors cursor-pointer">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
-              </button>
-              {/* Lang Icon */}
-              <button className="hover:text-[#FFD42A] transition-colors flex items-center justify-center text-[14px] font-bold cursor-pointer" style={{ fontFamily: "var(--font-sans)" }}>
-                中
-              </button>
-              {/* GitHub Icon */}
-              <a href="https://github.com" target="_blank" rel="noreferrer" className="hover:text-[#FFD42A] transition-colors cursor-pointer">
+              <a
+                href="https://github.com/WeiLabCPU/scCloud"
+                target="_blank"
+                rel="noreferrer"
+                aria-label="GitHub 仓库"
+                title="GitHub 仓库"
+                className="hover:text-[#FFD42A] transition-colors cursor-pointer"
+              >
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"></path></svg>
               </a>
             </div>
@@ -168,14 +168,17 @@ export default function DashboardLayout({
                   onClick={() => {
                     const opening = !userDropdownOpen;
                     setUserDropdownOpen(opening);
-                    if (opening) {
-                      const tk = getAuthToken();
-                      if (tk) fetch("/api/auth/me", { headers: { Authorization: "Bearer " + tk } })
-                        .then(r => r.json())
-                        .then(d => {
-                          if (d.total_quota !== undefined) setQuotaInfo({ total: d.total_quota, used: d.used_quota });
-          if (d.retention_days) setRetentionDays(d.retention_days);
-                          if (d.role) { setUserRole(d.role); const _s = isGuest() ? sessionStorage : localStorage; _s.setItem("role", d.role); }
+                    if (opening && getAuthToken()) {
+                      getCurrentUser()
+                        .then((d) => {
+                          setQuotaInfo({ total: d.total_quota, used: d.used_quota });
+                          if (d.retention_days) setRetentionDays(d.retention_days);
+                          if (d.role) {
+                            setUserRole(d.role);
+                            const _s = d.is_guest ? sessionStorage : localStorage;
+                            _s.setItem("role", d.role);
+                            setNavItems(d.role === "admin" ? [...NAV_ITEMS, ADMIN_NAV_ITEM] : NAV_ITEMS);
+                          }
                         })
                         .catch(() => {});
                     }

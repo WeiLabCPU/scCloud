@@ -10,7 +10,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { OrthographicView } from "@deck.gl/core";
 import { ScatterplotLayer } from "@deck.gl/layers";
 import DeckGL from "@deck.gl/react";
-import { getAuthToken } from "../lib/api";
+import { authedFetch } from "../lib/api";
 
 /* ── viridis 色阶（低表达浅灰 → viridis） ── */
 function viridisColor(t: number): [number, number, number] {
@@ -69,6 +69,7 @@ export default function GeneExpressionPopup({
   mousePos,
   onMouseEnter,
   onMouseLeave,
+  onClose,
   token,
 }: {
   gene: string;
@@ -77,6 +78,7 @@ export default function GeneExpressionPopup({
   mousePos: { x: number; y: number };
   onMouseEnter?: () => void;
   onMouseLeave?: () => void;
+  onClose?: () => void;
   token?: string;
 }) {
   const [data, setData] = useState<GeneExprData | null>(null);
@@ -145,27 +147,29 @@ export default function GeneExpressionPopup({
     const cacheKey = `${projectId}:${gene}:${celltype ?? ""}`;
     if (exprCache.has(cacheKey)) {
       setData(exprCache.get(cacheKey)!);
+      setLoading(false);
+      setError(null);
       return;
     }
 
-    let cancelled = false;
+    const controller = new AbortController();
     setLoading(true);
     setError(null);
-
-    const authToken = token || (typeof window !== "undefined" ? getAuthToken() || "" : "");
 
     const params = new URLSearchParams({ gene });
     if (celltype) params.set("celltype", celltype);
 
-    fetch(`/api/projects/${projectId}/gene_expression?${params}`, {
-      headers: { Authorization: `Bearer ${authToken}` },
+    const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+    authedFetch(`/api/projects/${projectId}/gene_expression?${params}`, {
+      headers,
+      signal: controller.signal,
     })
       .then((r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return r.json();
       })
       .then((d: GeneExprData | { error: string }) => {
-        if (cancelled) return;
+        if (controller.signal.aborted) return;
         if ("error" in d) {
           setError(d.error);
         } else {
@@ -174,14 +178,34 @@ export default function GeneExpressionPopup({
         }
       })
       .catch((e) => {
-        if (!cancelled) setError(e.message);
+        if (!controller.signal.aborted) setError(e.message);
       })
       .finally(() => {
-        if (!cancelled) setLoading(false);
+        if (!controller.signal.aborted) setLoading(false);
       });
 
-    return () => { cancelled = true; };
+    return () => { controller.abort(); };
   }, [gene, celltype, projectId, token]);
+
+  // Esc 与点击外部区域关闭弹窗
+  useEffect(() => {
+    const handleClose = onClose;
+    if (!handleClose) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") handleClose();
+    };
+    const onMouseDown = (e: MouseEvent) => {
+      if (popupRef.current && !popupRef.current.contains(e.target as Node)) {
+        handleClose();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    document.addEventListener("mousedown", onMouseDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      document.removeEventListener("mousedown", onMouseDown);
+    };
+  }, [onClose]);
 
   // deck.gl 图层
   const layers = useMemo(() => {
@@ -268,6 +292,27 @@ export default function GeneExpressionPopup({
         }}
       >
         <span style={{ color: "var(--clr-text)", fontSize: 13, fontWeight: 600 }}>{gene}</span>
+        {(onClose || onMouseLeave) && (
+          <button
+            type="button"
+            aria-label="关闭基因表达弹窗"
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={() => (onClose ?? onMouseLeave)?.()}
+            style={{
+              background: "transparent",
+              border: "none",
+              color: "var(--clr-text-muted)",
+              cursor: "pointer",
+              padding: "2px 4px",
+              lineHeight: 1,
+              fontSize: 16,
+              borderRadius: 4,
+            }}
+            title="关闭 (Esc)"
+          >
+            ×
+          </button>
+        )}
       </div>
 
       {/* 表达比例统计 */}

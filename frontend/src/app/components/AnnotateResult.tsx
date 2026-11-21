@@ -278,22 +278,26 @@ export default function AnnotateResult({
     }
   }, [markerTable, displayScatter, taskId, annotateData?.scatter_data, freqTable]);
 
-  // ── 基因表达弹窗状态（hover 触发，跟随鼠标） ──
+  // ── 基因表达弹窗状态（hover 或点击查询触发） ──
   const [activeGene, setActiveGene] = useState<string | null>(null);
   const [activeCellType, setActiveCellType] = useState<string | null>(null);
   const [geneMousePos, setGeneMousePos] = useState<{ x: number; y: number } | null>(null);
+  const [genePopupPinned, setGenePopupPinned] = useState(false);
   const geneCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const genePopupHovered = useRef(false);
+  const geneInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
   const openGenePopup = (gene: string, celltype: string, e: React.MouseEvent) => {
     if (geneCloseTimer.current) { clearTimeout(geneCloseTimer.current); geneCloseTimer.current = null; }
+    setGenePopupPinned(false);
     setActiveGene(gene);
     setActiveCellType(celltype);
     setGeneMousePos({ x: e.clientX, y: e.clientY });
   };
   const scheduleCloseGenePopup = () => {
+    if (genePopupPinned) return;
     geneCloseTimer.current = setTimeout(() => {
-      if (!genePopupHovered.current) {
+      if (!genePopupHovered.current && !genePopupPinned) {
         setActiveGene(null);
         setActiveCellType(null);
         setGeneMousePos(null);
@@ -497,10 +501,11 @@ export default function AnnotateResult({
     }
   }, [mergeMode, tableHighlightType, selectedForMerge]);
 
-  // 保存编辑后的注释结果（更新本地状态 + 持久化到后端）
+  // 保存编辑后的注释结果（持久化成功后才更新本地状态，防止静默吞错丢编辑）
   const [savingResults, setSavingResultsState] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const handleSaveResults = useCallback(async () => {
-    if (Object.keys(editedResults).length === 0) return;
+    if (savingResults || Object.keys(editedResults).length === 0) return;
 
     // 构建 merge_map: cluster_id -> new_celltype
     const clusterRename: Record<string, string> = {};
@@ -510,7 +515,7 @@ export default function AnnotateResult({
 
     if (Object.keys(clusterRename).length === 0) return;
 
-    // 更新 scatter_data.celltype 数组
+    // 预计算新散点与表数据，待服务端保存成功后再提交本地状态
     let newScatter: ScatterData | undefined;
     const scatter = displayScatter;
     if (scatter) {
@@ -522,18 +527,14 @@ export default function AnnotateResult({
         }
       }
       newScatter = { ...scatter, celltype: newCelltype };
-      setLocalScatter(newScatter);
     }
 
-    // 更新 markerTable（只更新 celltype，保留 original_celltype 不变）
     const newMarkerTable = markerTable.map(row =>
       clusterRename[row.cluster_id]
         ? { ...row, celltype: clusterRename[row.cluster_id] }
         : row
     );
-    setMarkerTable(newMarkerTable);
 
-    // 同步更新占比表：cluster_id 重命名转换为 celltype 重命名
     const renameMap: Record<string, string> = {};
     for (const row of markerTable) {
       const newName = clusterRename[row.cluster_id];
@@ -542,13 +543,9 @@ export default function AnnotateResult({
       }
     }
     const newFreqTable = renameFreqTable(freqTable, renameMap);
-    setFreqTable(newFreqTable);
 
-    setEditedResults({});
-    setMergeMode(false);
-
-    // 持久化到后端
     setSavingResultsState(true);
+    setSaveError(null);
     try {
       const updatePayload: Record<string, unknown> = {
         marker_table: newMarkerTable,
@@ -563,13 +560,20 @@ export default function AnnotateResult({
         updatePayload.freq_table = newFreqTable;
       }
       await updateTaskResult(taskId, updatePayload);
+
+      if (newScatter) setLocalScatter(newScatter);
+      setMarkerTable(newMarkerTable);
+      setFreqTable(newFreqTable);
+      setEditedResults({});
+      setMergeMode(false);
       window.dispatchEvent(new CustomEvent("annotation-updated"));
     } catch (e) {
       console.error("保存注释结果失败:", e);
+      setSaveError(e instanceof Error ? e.message : "保存注释结果失败，请检查网络或重试");
     } finally {
       setSavingResultsState(false);
     }
-  }, [editedResults, displayScatter, markerTable, taskId, annotateData?.scatter_data, freqTable]);
+  }, [savingResults, editedResults, displayScatter, markerTable, taskId, annotateData?.scatter_data, freqTable]);
 
   return (
     <div className="space-y-4">
@@ -659,9 +663,9 @@ export default function AnnotateResult({
         <div
           className="text-xs px-3 py-2 rounded"
           style={{
-            background: uploadAnnotateMsg.startsWith("成功") ? "rgba(22,163,74,0.06)" : "rgba(220,38,38,0.06)",
-            border: `1px solid ${uploadAnnotateMsg.startsWith("成功") ? "rgba(22,163,74,0.2)" : "rgba(220,38,38,0.2)"}`,
-            color: uploadAnnotateMsg.startsWith("成功") ? "#15803d" : "#b91c1c",
+            background: uploadAnnotateMsg?.startsWith("成功") ? "rgba(22,163,74,0.06)" : "rgba(220,38,38,0.06)",
+            border: `1px solid ${uploadAnnotateMsg?.startsWith("成功") ? "rgba(22,163,74,0.2)" : "rgba(220,38,38,0.2)"}`,
+            color: uploadAnnotateMsg?.startsWith("成功") ? "#15803d" : "#b91c1c",
           }}
         >
           {uploadAnnotateMsg}
@@ -821,7 +825,21 @@ export default function AnnotateResult({
           >
             {savingResults ? "保存中..." : "保存注释结果"}
           </button>
-          {mergeError && <span className="text-xs" style={{ color: "var(--clr-danger)" }}>{mergeError}</span>}
+          {saveError && (
+            <span className="text-xs font-medium" style={{ color: "var(--clr-danger)" }}>
+              保存失败：{saveError}
+            </span>
+          )}
+        </div>
+      )}
+
+      {saveError && (!mergeMode || Object.keys(editedResults).length === 0) && (
+        <div
+          className="flex items-center justify-between gap-2 px-3 py-2 rounded text-xs"
+          style={{ background: "rgba(220,38,38,0.08)", border: "1px solid rgba(220,38,38,0.25)", color: "var(--clr-danger)" }}
+        >
+          <span>保存注释结果失败：{saveError}</span>
+          <button type="button" onClick={() => setSaveError(null)} className="px-1.5 py-0.5 rounded hover:bg-black/5">×</button>
         </div>
       )}
 
@@ -959,6 +977,8 @@ export default function AnnotateResult({
                         <div style={{ position: "relative" }}>
                           <div className="flex items-center gap-1">
                             <input
+                              ref={(el) => { geneInputRefs.current[row.cluster_id] = el; }}
+                              data-cluster={row.cluster_id}
                               type="text"
                               value={geneQueryInputs[row.cluster_id] || ""}
                               onChange={(e) => setGeneQueryInputs(prev => ({ ...prev, [row.cluster_id]: e.target.value }))}
@@ -974,10 +994,13 @@ export default function AnnotateResult({
                               }}
                             />
                             <button
+                              type="button"
                               onClick={(e) => {
                                 const gene = geneQueryInputs[row.cluster_id]?.trim();
                                 if (gene) {
+                                  if (geneCloseTimer.current) { clearTimeout(geneCloseTimer.current); geneCloseTimer.current = null; }
                                   const rect = (e.currentTarget as HTMLButtonElement).getBoundingClientRect();
+                                  setGenePopupPinned(true);
                                   setActiveGene(gene);
                                   setActiveCellType(row.celltype);
                                   setGeneMousePos({ x: rect.left, y: rect.bottom + 4 });
@@ -1019,18 +1042,20 @@ export default function AnnotateResult({
                                 {row.markers.slice(0, expandedMarkers[row.cluster_id] ? row.markers.length : Math.min(6, row.markers.length)).map((g) => (
                                   <button
                                     key={g}
+                                    type="button"
                                     onMouseDown={() => {
                                       setGeneQueryInputs(prev => ({ ...prev, [row.cluster_id]: g }));
                                       setShowMarkerPanel(prev => ({ ...prev, [row.cluster_id]: false }));
-                                      setTimeout(() => {
-                                        setActiveGene(g);
-                                        setActiveCellType(row.celltype);
-                                        const inputEl = document.querySelector(`input[data-cluster="${row.cluster_id}"]`) as HTMLInputElement;
-                                        if (inputEl) {
-                                          const rect = inputEl.getBoundingClientRect();
-                                          setGeneMousePos({ x: rect.left, y: rect.bottom + 4 });
-                                        }
-                                      }, 50);
+                                      if (geneCloseTimer.current) { clearTimeout(geneCloseTimer.current); geneCloseTimer.current = null; }
+                                      const inputEl = geneInputRefs.current[row.cluster_id]
+                                        ?? (document.querySelector(`input[data-cluster="${CSS.escape(row.cluster_id)}"]`) as HTMLInputElement | null);
+                                      const rect = inputEl?.getBoundingClientRect();
+                                      setGenePopupPinned(true);
+                                      setActiveGene(g);
+                                      setActiveCellType(row.celltype);
+                                      if (rect) {
+                                        setGeneMousePos({ x: rect.left, y: rect.bottom + 4 });
+                                      }
                                     }}
                                     className="px-1.5 py-0.5 rounded text-[10px] transition-colors hover:opacity-80"
                                     style={{
@@ -1227,7 +1252,7 @@ export default function AnnotateResult({
         </div>
       )}
 
-      {/* ── 基因表达弹窗（hover 触发） ── */}
+      {/* ── 基因表达弹窗（hover 或点击查询触发） ── */}
       {activeGene && geneMousePos && typeof window !== "undefined" && createPortal(
         <GeneExpressionPopup
           gene={activeGene}
@@ -1240,7 +1265,15 @@ export default function AnnotateResult({
           }}
           onMouseLeave={() => {
             genePopupHovered.current = false;
-            scheduleCloseGenePopup();
+            if (!genePopupPinned) scheduleCloseGenePopup();
+          }}
+          onClose={() => {
+            if (geneCloseTimer.current) { clearTimeout(geneCloseTimer.current); geneCloseTimer.current = null; }
+            genePopupHovered.current = false;
+            setGenePopupPinned(false);
+            setActiveGene(null);
+            setActiveCellType(null);
+            setGeneMousePos(null);
           }}
           token={token}
         />,

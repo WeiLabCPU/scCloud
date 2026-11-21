@@ -28,6 +28,7 @@ interface UploadedFile {
 
 interface PipelineFormProps {
   projectId: number;
+  projectSpecies?: string;
   token: string;
   onSubmit: (pipelineId: string) => void;
   uploadedFiles: UploadedFile[];
@@ -35,6 +36,10 @@ interface PipelineFormProps {
   sampleGroups: Record<string, string>;
   onSampleGroupsChange: (groups: Record<string, string>) => void;
   onExportProject?: (e: React.MouseEvent<HTMLButtonElement>) => void;
+}
+
+function normalizeSpecies(species?: string): "Human" | "Mouse" {
+  return species?.toLowerCase() === "mouse" ? "Mouse" : "Human";
 }
 
 const DEFAULT_PARAMS: Record<string, Record<string, unknown>> = {
@@ -90,12 +95,25 @@ const STATUS_MAP: Record<string, { dot: string; text: string }> = {
   cancelled: { dot: "bg-[#E0DCD6]", text: "text-[#999]" },
 };
 
-export default function PipelineForm({ projectId, token, onSubmit, uploadedFiles, onUploadedFilesChange, sampleGroups, onSampleGroupsChange, onExportProject }: PipelineFormProps) {
+export default function PipelineForm({ projectId, projectSpecies, token, onSubmit, uploadedFiles, onUploadedFilesChange, sampleGroups, onSampleGroupsChange, onExportProject }: PipelineFormProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [params, setParams] = useState<Record<string, Record<string, unknown>>>(
-    JSON.parse(JSON.stringify(DEFAULT_PARAMS))
-  );
+  const [params, setParams] = useState<Record<string, Record<string, unknown>>>(() => {
+    const initial = JSON.parse(JSON.stringify(DEFAULT_PARAMS)) as Record<string, Record<string, unknown>>;
+    const sp = normalizeSpecies(projectSpecies);
+    initial.annotate.species = sp;
+    initial.cellchat.species = sp;
+    return initial;
+  });
+
+  useEffect(() => {
+    const sp = normalizeSpecies(projectSpecies);
+    setParams(prev => ({
+      ...prev,
+      annotate: { ...prev.annotate, species: sp },
+      cellchat: { ...prev.cellchat, species: sp },
+    }));
+  }, [projectId, projectSpecies]);
   const historyRef = useRef<HTMLDivElement>(null);
   const [showAddSample, setShowAddSample] = useState(false);
   const [annoFile, setAnnoFile] = useState<{ name: string; data: { Cluster: string; CellType: string; Markers: string }[] } | null>(null);

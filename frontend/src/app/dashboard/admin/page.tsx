@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState, useCallback } from "react";
-import { listUsers, updateUser, deleteUser, type AdminUser } from "../../lib/api";
+import { listUsers, updateUser, deleteUser, getCurrentUser, getAuthItem, type AdminUser } from "../../lib/api";
 
 export default function AdminPage() {
   const [users, setUsers] = useState<AdminUser[]>([]);
@@ -13,7 +13,23 @@ export default function AdminPage() {
   const [editUser, setEditUser] = useState<AdminUser | null>(null);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [batchLoading, setBatchLoading] = useState(false);
+  const [currentAdminId, setCurrentAdminId] = useState<number | null>(null);
+  const [currentAdminName, setCurrentAdminName] = useState<string>(() => getAuthItem("username") || "");
   const pageSize = 20;
+
+  useEffect(() => {
+    getCurrentUser()
+      .then((u) => {
+        setCurrentAdminId(u.id);
+        setCurrentAdminName(u.username);
+      })
+      .catch(() => {});
+  }, []);
+
+  const isProtectedSelf = useCallback(
+    (u: AdminUser) => (currentAdminId !== null ? u.id === currentAdminId : u.username === currentAdminName),
+    [currentAdminId, currentAdminName]
+  );
 
   const loadUsers = useCallback(async () => {
     setLoading(true);
@@ -41,12 +57,13 @@ export default function AdminPage() {
     });
   };
 
+  const selectableUsers = users.filter((u) => !isProtectedSelf(u));
+
   const toggleSelectAll = () => {
-    const selectable = users.filter(u => u.username !== 'Linli');
-    if (selected.size === selectable.length) {
+    if (selectableUsers.length > 0 && selected.size === selectableUsers.length) {
       setSelected(new Set());
     } else {
-      setSelected(new Set(selectable.map(u => u.id)));
+      setSelected(new Set(selectableUsers.map(u => u.id)));
     }
   };
 
@@ -211,7 +228,7 @@ export default function AdminPage() {
               <th className="px-3 py-2 w-8">
                 <input
                   type="checkbox"
-                  checked={selected.size === users.length && users.length > 0}
+                  checked={selectableUsers.length > 0 && selected.size === selectableUsers.length}
                   onChange={() => toggleSelectAll()}
                 />
               </th>
@@ -227,18 +244,26 @@ export default function AdminPage() {
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={7} className="px-3 py-8 text-center" style={{ color: "var(--clr-text-faint)" }}>
+                <td colSpan={8} className="px-3 py-8 text-center" style={{ color: "var(--clr-text-faint)" }}>
                   加载中...
                 </td>
               </tr>
             ) : users.length === 0 ? (
               <tr>
-                <td colSpan={7} className="px-3 py-8 text-center" style={{ color: "var(--clr-text-faint)" }}>
+                <td colSpan={8} className="px-3 py-8 text-center" style={{ color: "var(--clr-text-faint)" }}>
                   暂无用户
                 </td>
               </tr>
             ) : (
-              users.map((u) => (
+              users.map((u) => {
+                const isSelf = isProtectedSelf(u);
+                const roleLabel = u.role === "admin" ? "admin" : u.role === "super" ? "super" : (u.is_guest || u.role === "guest") ? "guest" : "user";
+                const roleStyle: React.CSSProperties = u.role === "admin"
+                  ? { background: "var(--clr-amber)", color: "#fff" }
+                  : u.role === "super"
+                  ? { background: "var(--clr-gold-soft)", color: "var(--clr-amber-dark)" }
+                  : { background: "var(--clr-bg-alt)", color: "var(--clr-text-muted)" };
+                return (
                 <tr
                   key={u.id}
                   className="border-t transition-colors hover:bg-opacity-50"
@@ -249,26 +274,23 @@ export default function AdminPage() {
                       type="checkbox"
                       checked={selected.has(u.id)}
                       onChange={() => toggleSelect(u.id)}
-                      disabled={u.username === "Linli"}
-                      style={u.username === "Linli" ? { opacity: 0.3, cursor: "not-allowed" } : undefined}
+                      disabled={isSelf}
+                      style={isSelf ? { opacity: 0.3, cursor: "not-allowed" } : undefined}
                     />
                   </td>
                   <td className="px-3 py-2 font-mono" style={{ color: "var(--clr-text-faint)" }}>{u.id}</td>
                   <td className="px-3 py-2 font-medium" style={{ color: "var(--clr-text)" }}>
                     {u.username}
-                    {u.username === "Linli" && (
-                      <span className="ml-1.5 px-1 py-0.5 rounded text-[9px] font-bold" style={{ background: "var(--clr-amber)", color: "#fff" }}>主管理员</span>
+                    {isSelf && (
+                      <span className="ml-1.5 px-1 py-0.5 rounded text-[9px] font-bold" style={{ background: "var(--clr-amber)", color: "#fff" }}>当前管理员</span>
                     )}
                   </td>
                   <td className="px-3 py-2">
                     <span
                       className="px-1.5 py-0.5 rounded text-[10px] font-medium"
-                      style={{
-                        background: u.role === "admin" ? "var(--clr-amber)" : u.is_guest ? "var(--clr-bg-alt)" : "var(--clr-bg-alt)",
-                        color: u.role === "admin" ? "#fff" : "var(--clr-text-muted)",
-                      }}
+                      style={roleStyle}
                     >
-                      {u.role === "admin" ? "admin" : u.is_guest ? "guest" : "user"}
+                      {roleLabel}
                     </span>
                   </td>
                   <td className="px-3 py-2 font-mono" style={{ color: "var(--clr-text-muted)" }}>
@@ -296,15 +318,16 @@ export default function AdminPage() {
                     </button>
                     <button
                       onClick={() => handleDelete(u)}
-                      disabled={u.username === "Linli"}
+                      disabled={isSelf}
                       className="px-2 py-1 rounded text-[10px] font-medium transition-all hover:opacity-80"
-                      style={u.username === "Linli" ? { background: "#ccc", color: "#999", cursor: "not-allowed" } : { background: "var(--clr-danger)", color: "#fff" }}
+                      style={isSelf ? { background: "#ccc", color: "#999", cursor: "not-allowed" } : { background: "var(--clr-danger)", color: "#fff" }}
                     >
                       删除
                     </button>
                   </td>
                 </tr>
-              ))
+                );
+              })
             )}
           </tbody>
         </table>
@@ -362,7 +385,7 @@ export default function AdminPage() {
                     const newRole = e.target.value;
                     const defaults: Record<string, { max_projects: number; total_quota: number }> = {
                       guest: { max_projects: 1, total_quota: 0 },
-                      user:  { max_projects: 1, total_quota: 0 },
+                      user:  { max_projects: 1, total_quota: 10 },
                       super: { max_projects: 5, total_quota: 100 },
                       admin: { max_projects: 99, total_quota: 99999 },
                     };

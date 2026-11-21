@@ -6,7 +6,15 @@
 
 import { useEffect, useState } from "react";
 import AuthModal from "../../components/AuthModal";
-import { healthCheck, getAuthToken} from "../../lib/api";
+import {
+  apiFetch,
+  getAuthItem,
+  getAuthToken,
+  getCurrentUser,
+  healthCheck,
+  isGuest,
+  ROLE_LABELS,
+} from "../../lib/api";
 
 
 
@@ -21,22 +29,41 @@ export default function SettingsPage() {
   const [oldPwd, setOldPwd] = useState("");
   const [newPwd, setNewPwd] = useState("");
   const [confirmPwd, setConfirmPwd] = useState("");
+  const [username, setUsername] = useState("");
   const [userRole, setUserRole] = useState("user");
-  const [maxProjects, setMaxProjects] = useState(5);
+  const [maxProjects, setMaxProjects] = useState<number | null>(null);
+  const [quota, setQuota] = useState<{ used: number; total: number } | null>(null);
+  const [retentionDays, setRetentionDays] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
   const [pwdMsg, setPwdMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [health, setHealth] = useState<Health | null>(null);
   const [guest, setGuest] = useState(false);
   const [authOpen, setAuthOpen] = useState(false);
 
-  const username = typeof window !== "undefined" ? localStorage.getItem("username") : "";
-
   useEffect(() => {
     const token = getAuthToken();
-    const isGuestUser = !token || token.startsWith("guest_") || (username || "").startsWith("guest_");
-    setGuest(isGuestUser);
-    if (isGuestUser) {
+    const cachedName = getAuthItem("username") || "";
+    const cachedRole = getAuthItem("role") || "user";
+    setUsername(cachedName);
+    setUserRole(cachedRole);
+
+    const guestNow = !token || isGuest() || cachedName.startsWith("guest_");
+    setGuest(guestNow);
+    if (guestNow) {
       setAuthOpen(true);
+    }
+    if (token) {
+      getCurrentUser()
+        .then((u) => {
+          setUsername(u.username);
+          setUserRole(u.role);
+          setMaxProjects(u.max_projects);
+          setQuota({ used: u.used_quota, total: u.total_quota });
+          setRetentionDays(u.retention_days);
+          setGuest(Boolean(u.is_guest));
+          if (u.is_guest) setAuthOpen(true);
+        })
+        .catch(() => {});
     }
     healthCheck().then(setHealth).catch(() => setHealth(null));
   }, []);
@@ -46,20 +73,15 @@ export default function SettingsPage() {
     if (newPwd.length < 6) { setPwdMsg({ ok: false, text: "密码至少 6 位" }); return; }
     setSaving(true); setPwdMsg(null);
     try {
-      const token = getAuthToken();
-      const res = await fetch("/api/auth/change-password", {
+      await apiFetch("/api/auth/change-password", {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ old_password: oldPwd, new_password: newPwd }),
       });
-      if (res.ok) {
-        setPwdMsg({ ok: true, text: "密码修改成功" });
-        setOldPwd(""); setNewPwd(""); setConfirmPwd("");
-      } else {
-        const data = await res.json().catch(() => null);
-        setPwdMsg({ ok: false, text: data?.detail || "修改失败" });
-      }
-    } catch { setPwdMsg({ ok: false, text: "网络错误" }); }
+      setPwdMsg({ ok: true, text: "密码修改成功" });
+      setOldPwd(""); setNewPwd(""); setConfirmPwd("");
+    } catch (e) {
+      setPwdMsg({ ok: false, text: e instanceof Error ? e.message : "修改失败" });
+    }
     finally { setSaving(false); }
   };
 
@@ -83,16 +105,28 @@ export default function SettingsPage() {
         <div className="grid gap-3 text-sm mt-3">
           <div className="flex justify-between py-2" style={{ borderBottom: "1px solid var(--clr-border)" }}>
             <span style={{ color: "var(--clr-text-muted)" }}>用户名</span>
-            <span className="font-medium" style={{ color: "var(--clr-dark)" }}>{username}</span>
+            <span className="font-medium" style={{ color: "var(--clr-dark)" }}>{username || "—"}</span>
           </div>
           <div className="flex justify-between py-2" style={{ borderBottom: "1px solid var(--clr-border)" }}>
             <span style={{ color: "var(--clr-text-muted)" }}>角色</span>
-            <span className="badge">{userRole}</span>
+            <span className="badge">{ROLE_LABELS[userRole] ? `${ROLE_LABELS[userRole]} (${userRole})` : userRole}</span>
           </div>
-          <div className="flex justify-between py-2">
+          <div className="flex justify-between py-2" style={{ borderBottom: "1px solid var(--clr-border)" }}>
             <span style={{ color: "var(--clr-text-muted)" }}>项目上限</span>
-            <span style={{ color: "var(--clr-dark)" }}>{maxProjects}</span>
+            <span style={{ color: "var(--clr-dark)" }}>{maxProjects ?? "—"}</span>
           </div>
+          {quota && (
+            <div className="flex justify-between py-2" style={{ borderBottom: "1px solid var(--clr-border)" }}>
+              <span style={{ color: "var(--clr-text-muted)" }}>操作配额 (已用 / 总计)</span>
+              <span className="font-mono text-xs" style={{ color: "var(--clr-dark)" }}>{quota.used} / {quota.total}</span>
+            </div>
+          )}
+          {retentionDays !== null && (
+            <div className="flex justify-between py-2">
+              <span style={{ color: "var(--clr-text-muted)" }}>数据保留期</span>
+              <span style={{ color: "var(--clr-dark)" }}>{retentionDays} 天</span>
+            </div>
+          )}
         </div>
       </div>
 
