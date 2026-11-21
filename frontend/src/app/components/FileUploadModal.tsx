@@ -4,9 +4,10 @@
  */
 "use client";
 
-import React, { useState, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { IconUpload } from "./Icons";
+import { authedFetch } from "../lib/api";
 
 interface FileInfo {
   filename: string;
@@ -40,61 +41,127 @@ export default function FileUploadModal({
   sampleGroups,
 }: FileUploadModalProps) {
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
+  const [statusText, setStatusText] = useState<string>("");
   const [inspecting, setInspecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fileInfo, setFileInfo] = useState<FileInfo | null>(null);
   const [uploadedFile, setUploadedFile] = useState<{ name: string; path: string } | null>(null);
   const [dragging, setDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
+
+  const resetAllState = () => {
+    setFileInfo(null);
+    setUploadedFile(null);
+    setUploadProgress(null);
+    setStatusText("");
+    setInspecting(false);
+    setError(null);
+    setDragging(false);
+  };
+
+  // 打开模态框时清空残留状态；组件卸载或关闭时终止进行中的上传
+  useEffect(() => {
+    if (isOpen) {
+      resetAllState();
+    }
+    return () => {
+      if (abortRef.current) {
+        abortRef.current.abort();
+        abortRef.current = null;
+      }
+    };
+  }, [isOpen]);
+
+  const handleCancelUpload = (silent = false) => {
+    if (abortRef.current) {
+      abortRef.current.abort();
+      abortRef.current = null;
+    }
+    setUploadProgress(null);
+    setInspecting(false);
+    setStatusText("");
+    if (!silent) {
+      setError("已取消上传");
+    }
+  };
+
+  const handleRequestClose = () => {
+    const busy = uploadProgress !== null || inspecting;
+    if (busy) {
+      if (!window.confirm("文件正在上传或解析中，确定要取消并关闭吗？")) {
+        return;
+      }
+      handleCancelUpload(true);
+    }
+    resetAllState();
+    onClose();
+  };
 
   const handleFileUpload = async (file: File) => {
     const CHUNK = 5 * 1024 * 1024; // 5MB per chunk
+    if (abortRef.current) {
+      abortRef.current.abort();
+    }
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     setUploadProgress(0);
+    setStatusText("初始化上传...");
     setError(null);
     setFileInfo(null);
+    setUploadedFile(null);
 
     try {
       // 1. 初始化上传
       const initForm = new FormData();
       initForm.append("filename", file.name);
       initForm.append("file_size", String(file.size));
-      const initRes = await fetch("/api/upload/init", {
+      const initRes = await authedFetch("/api/upload/init", {
         method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
         body: initForm,
+        signal: controller.signal,
       });
       if (!initRes.ok) { const errData = await initRes.json().catch(() => ({})); throw new Error(errData.detail || "初始化上传失败"); }
       const { upload_id } = (await initRes.json()) as { upload_id: string };
 
       // 2. 分片上传
-      const totalChunks = Math.ceil(file.size / CHUNK);
+      const totalChunks = Math.max(1, Math.ceil(file.size / CHUNK));
       for (let i = 0; i < totalChunks; i++) {
+        if (controller.signal.aborted) {
+          throw new DOMException("Aborted", "AbortError");
+        }
+        setStatusText(`正在上传分片 ${i + 1} / ${totalChunks}...`);
         const blob = file.slice(i * CHUNK, (i + 1) * CHUNK);
         const chunkForm = new FormData();
         chunkForm.append("upload_id", upload_id);
         chunkForm.append("chunk_index", String(i));
         chunkForm.append("chunk", blob, file.name);
-        const chunkRes = await fetch("/api/upload/chunk", {
+        const chunkRes = await authedFetch("/api/upload/chunk", {
           method: "POST",
-          headers: { Authorization: `Bearer ${token}` },
           body: chunkForm,
+          signal: controller.signal,
         });
-        if (!chunkRes.ok) throw new Error(`分片 ${i + 1} 上传失败`);
+        if (!chunkRes.ok) {
+          const errData = await chunkRes.json().catch(() => ({}));
+          throw new Error(errData.detail || `分片 ${i + 1} 上传失败`);
+        }
         setUploadProgress(Math.round(((i + 1) / totalChunks) * 70));
       }
 
       // 3. 先完成上传（合并分片），不依赖 R 引擎
       setUploadProgress(80);
+      setStatusText("正在合并文件...");
       const completeForm = new FormData();
       completeForm.append("upload_id", upload_id);
       completeForm.append("project_id", String(projectId));
       if (sampleGroups && Object.keys(sampleGroups).length > 0) {
         completeForm.append("sample_groups", JSON.stringify(sampleGroups));
       }
-      const completeRes = await fetch("/api/upload/complete", {
+      const completeRes = await authedFetch("/api/upload/complete", {
         method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
         body: completeForm,
+        signal: controller.signal,
       });
       if (!completeRes.ok) {
         const errData = await completeRes.json().catch(() => ({}));
@@ -107,35 +174,51 @@ export default function FileUploadModal({
 
       // 4. 解析文件信息（不阻塞上传，失败时用户仍可使用文件）
       setInspecting(true);
+      setStatusText("正在解析文件元数据...");
       try {
         const inspectForm = new FormData();
         inspectForm.append("file_path", filePath);
-        const inspectRes = await fetch("/api/upload/inspect-path", {
+        const inspectRes = await authedFetch("/api/upload/inspect-path", {
           method: "POST",
-          headers: { Authorization: `Bearer ${token}` },
           body: inspectForm,
+          signal: controller.signal,
         });
-        if (inspectRes.ok) {
+        if (inspectRes.ok && !controller.signal.aborted) {
           const info = (await inspectRes.json()) as FileInfo;
           setFileInfo(info);
         }
-      } catch {
+      } catch (inspectErr) {
+        if (inspectErr instanceof DOMException && inspectErr.name === "AbortError") {
+          throw inspectErr;
+        }
         // inspect 失败不影响上传结果
       }
 
-      setUploadProgress(100);
-      setTimeout(() => setUploadProgress(null), 500);
+      if (!controller.signal.aborted) {
+        setUploadProgress(100);
+        setStatusText("完成");
+        setTimeout(() => setUploadProgress(null), 500);
+      }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "上传失败");
-      setUploadProgress(null);
+      if ((e instanceof DOMException && e.name === "AbortError") || controller.signal.aborted) {
+        setUploadProgress(null);
+        setStatusText("");
+      } else {
+        setError(e instanceof Error ? e.message : "上传失败");
+        setUploadProgress(null);
+        setStatusText("");
+      }
     } finally {
+      if (abortRef.current === controller) {
+        abortRef.current = null;
+      }
       setInspecting(false);
     }
   };
 
   const handleConfirm = () => {
     if (uploadedFile) {
-      onFileUploaded({
+      const payload = {
         ...uploadedFile,
         metadata_columns: fileInfo?.metadata_columns,
         n_cells: fileInfo?.n_cells,
@@ -145,26 +228,30 @@ export default function FileUploadModal({
         file_size_mb: fileInfo?.file_size_mb,
         samples: fileInfo?.samples,
         ensembl_version: fileInfo?.ensembl_version,
-      });
+      };
+      resetAllState();
+      onFileUploaded(payload);
       onClose();
     }
   };
 
   const handleReset = () => {
-    setFileInfo(null);
-    setUploadedFile(null);
-    setUploadProgress(null);
-    setError(null);
+    handleCancelUpload(true);
+    resetAllState();
   };
 
   if (!isOpen) return null;
 
+  const isBusy = uploadProgress !== null || inspecting;
+
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center">
-      {/* 背景遮罩 */}
+      {/* 背景遮罩 — 上传或解析中禁止点击外部误关 */}
       <div
         className="absolute inset-0 bg-black/20"
-        onClick={onClose}
+        onClick={() => {
+          if (!isBusy) handleRequestClose();
+        }}
       />
 
       {/* 模态框内容 */}
@@ -198,9 +285,10 @@ export default function FileUploadModal({
             </p>
           </div>
           <button
-            onClick={onClose}
+            onClick={handleRequestClose}
             className="p-2 rounded-lg hover:bg-white/80 transition-colors"
             style={{ color: "var(--clr-text-muted)" }}
+            title={isBusy ? "取消上传并关闭" : "关闭"}
           >
             <svg
               width="20"
@@ -262,29 +350,27 @@ export default function FileUploadModal({
                 if (f) handleFileUpload(f);
               }}
             >
-              <IconUpload
-                size={48}
-                className="mx-auto mb-4"
-                style={{ color: "var(--clr-amber)" }}
-              />
+              <span className="mx-auto mb-4 inline-flex" style={{ color: "var(--clr-amber)" }}>
+                <IconUpload size={48} />
+              </span>
               <div
                 className="text-base font-semibold mb-2"
                 style={{ color: "var(--clr-amber-dark)" }}
               >
-                {uploadProgress !== null ? "上传中..." : "点击选择文件或拖拽到此处"}
+                {uploadProgress !== null ? (statusText || "上传中...") : "点击选择文件或拖拽到此处"}
               </div>
               <div className="text-sm" style={{ color: "var(--clr-text-muted)" }}>
                 支持 .rds, .h5seurat, .h5ad, .h5, .rdata, .loom 格式，最大 30GB
               </div>
 
-              {/* 上传进度条 */}
+              {/* 上传进度条与取消按钮 */}
               {uploadProgress !== null && (
-                <div className="mt-6 space-y-2">
+                <div className="mt-6 space-y-2.5" onClick={(e) => e.stopPropagation()}>
                   <div
                     className="flex justify-between text-sm"
                     style={{ color: "var(--clr-amber-dark)" }}
                   >
-                    <span>{inspecting ? "解析文件中..." : "上传中..."}</span>
+                    <span>{statusText || (inspecting ? "解析文件中..." : "上传中...")}</span>
                     <span>{uploadProgress}%</span>
                   </div>
                   <div
@@ -298,6 +384,19 @@ export default function FileUploadModal({
                         background: "linear-gradient(90deg, var(--clr-amber), #E8913A)",
                       }}
                     />
+                  </div>
+                  <div className="pt-1 flex justify-center">
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleCancelUpload(false);
+                      }}
+                      className="px-3.5 py-1.5 rounded-lg text-xs font-medium border transition-colors hover:bg-red-50"
+                      style={{ borderColor: "var(--clr-border)", color: "var(--clr-danger)", background: "#fff" }}
+                    >
+                      取消上传
+                    </button>
                   </div>
                 </div>
               )}

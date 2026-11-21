@@ -6,8 +6,17 @@
  */
 "use client";
 
-import { useState, useCallback } from "react";
-import { apiFetch, authedFetch } from "../../lib/api";
+import { useRouter } from "next/navigation";
+import { useState, useCallback, useEffect } from "react";
+import {
+  apiFetch,
+  authedFetch,
+  createProject,
+  importConvertedToProject,
+  inspectFileByPath,
+  listProjects,
+  type Project,
+} from "../../lib/api";
 
 /* ===== 接口类型 ===== */
 interface MergeResult {
@@ -59,6 +68,8 @@ async function authDownload(url: string, filename: string) {
 }
 
 export default function ConvertPage() {
+  const router = useRouter();
+
   // ===== MTX 整合状态 =====
   const [samples, setSamples] = useState<SampleEntry[]>([
     { id: "s1", name: "Sample1", group: "", file: null },
@@ -68,6 +79,37 @@ export default function ConvertPage() {
   const [mergeResult, setMergeResult] = useState<MergeResult | null>(null);
   const [mergeError, setMergeError] = useState<string | null>(null);
 
+  // ===== 导入项目状态 =====
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [selectedProjectId, setSelectedProjectId] = useState<string>("");
+  const [newProjectName, setNewProjectName] = useState("Merged_Analysis");
+  const [newProjectSpecies, setNewProjectSpecies] = useState<"human" | "mouse">("human");
+  const [importFilename, setImportFilename] = useState("merged_samples.rds");
+  const [importing, setImporting] = useState(false);
+  const [importStatus, setImportStatus] = useState("");
+  const [importError, setImportError] = useState<string | null>(null);
+
+  const loadAvailableProjects = useCallback(async () => {
+    try {
+      const res = await listProjects();
+      const unanalyzed = (res.projects || []).filter((p) => !p.has_analyzed);
+      setProjects(unanalyzed);
+      setSelectedProjectId((prev) => {
+        if (prev && (prev === "__new__" || unanalyzed.some((p) => String(p.id) === prev))) {
+          return prev;
+        }
+        return unanalyzed.length > 0 ? String(unanalyzed[0].id) : "__new__";
+      });
+    } catch {
+      setProjects([]);
+      setSelectedProjectId("__new__");
+    }
+  }, []);
+
+  useEffect(() => {
+    loadAvailableProjects();
+  }, [loadAvailableProjects]);
+
   /* ===== MTX 整合 ===== */
   const handleMerge = useCallback(async () => {
     const validSamples = samples.filter((s) => s.file && s.name.trim());
@@ -75,6 +117,8 @@ export default function ConvertPage() {
     setMerging(true);
     setMergeResult(null);
     setMergeError(null);
+    setImportError(null);
+    setImportStatus("");
 
     try {
       const formData = new FormData();
@@ -89,12 +133,116 @@ export default function ConvertPage() {
         body: formData,
       });
       setMergeResult(data);
+      loadAvailableProjects();
     } catch (e) {
       setMergeError(e instanceof Error ? e.message : "整合失败");
     } finally {
       setMerging(false);
     }
-  }, [samples]);
+  }, [samples, loadAvailableProjects]);
+
+  /* ===== 一键导入项目并前往分析 ===== */
+  const handleImportToProject = useCallback(async () => {
+    if (!mergeResult?.output_path || importing) return;
+    setImporting(true);
+    setImportError(null);
+
+    try {
+      let targetProj: Project | undefined;
+      if (selectedProjectId === "__new__" || !selectedProjectId) {
+        const trimmedName = newProjectName.trim();
+        if (!trimmedName) {
+          throw new Error("请输入新项目名称");
+        }
+        setImportStatus("正在创建项目...");
+        targetProj = await createProject({
+          name: trimmedName,
+          species: newProjectSpecies,
+        });
+      } else {
+        targetProj = projects.find((p) => String(p.id) === selectedProjectId);
+        if (!targetProj) {
+          throw new Error("所选项目不可用，请刷新重试");
+        }
+      }
+
+      setImportStatus("正在将整合文件导入项目...");
+      const imp = await importConvertedToProject({
+        source_path: mergeResult.output_path,
+        project_id: targetProj.id,
+        filename: importFilename.trim() || "merged_samples.rds",
+      });
+
+      setImportStatus("正在解析基因与样本元数据...");
+      let uploadedEntry: {
+        name: string;
+        path: string;
+        metadata_columns?: string[];
+        n_cells?: number;
+        n_genes?: number;
+        n_rows?: number;
+        n_cols?: number;
+        file_size_mb?: number;
+        samples?: { name: string; cell_count: number }[];
+        ensembl_version?: string;
+      } = {
+        name: imp.filename,
+        path: imp.path,
+        n_cells: mergeResult.cells,
+        n_genes: mergeResult.genes,
+        n_rows: mergeResult.cells,
+        n_cols: mergeResult.genes,
+        file_size_mb: imp.size_mb,
+      };
+
+      try {
+        const info = await inspectFileByPath(imp.path);
+        uploadedEntry = {
+          name: imp.filename,
+          path: imp.path,
+          metadata_columns: info.metadata_columns,
+          n_cells: info.n_cells ?? info.n_rows,
+          n_genes: info.n_genes ?? info.n_cols,
+          n_rows: info.n_rows,
+          n_cols: info.n_cols,
+          file_size_mb: info.file_size_mb ?? imp.size_mb,
+          samples: info.samples,
+          ensembl_version: info.ensembl_version,
+        };
+      } catch {
+        // inspect 超时或失败不阻塞跳转到分析页
+      }
+
+      if (typeof window !== "undefined") {
+        sessionStorage.setItem(
+          "sccloud_analysis_state",
+          JSON.stringify({
+            project: targetProj,
+            uploadedFiles: [uploadedEntry],
+            uploadedFile: uploadedEntry,
+            sampleGroups: imp.sample_groups || {},
+            activePipelineId: null,
+          }),
+        );
+      }
+
+      router.push(`/dashboard/analysis?project=${targetProj.id}`);
+    } catch (e) {
+      setImportError(e instanceof Error ? e.message : "导入项目失败");
+      setImportStatus("");
+    } finally {
+      setImporting(false);
+    }
+  }, [
+    mergeResult,
+    importing,
+    selectedProjectId,
+    newProjectName,
+    newProjectSpecies,
+    projects,
+    importFilename,
+    router,
+  ]);
 
   const addSample = () => {
     const id = `s${Date.now()}`;
@@ -124,13 +272,14 @@ export default function ConvertPage() {
       {/* 说明 */}
       <div className="p-4 rounded-xl text-xs" style={{ background: "var(--clr-gold-soft)", border: "1px solid rgba(200,96,25,0.15)", color: "var(--clr-amber-dark)" }}>
         <p className="font-semibold mb-1">使用说明</p>
-        <p>每个样本上传一个 ZIP 压缩包，包含 10X CellRanger 输出的 3 个文件：</p>
-        <p className="font-mono mt-1">matrix.mtx.gz、features.tsv.gz、barcodes.tsv.gz</p>
+        <p>支持两类样本输入（注意同一批次需保持同类格式）：</p>
+        <p className="font-mono mt-1">1) 10X MTX ZIP 包（内含 matrix.mtx.gz、features.tsv.gz、barcodes.tsv.gz）</p>
+        <p className="font-mono mt-0.5">2) 单样本表达矩阵（.rds / .h5ad / .h5seurat / .h5 / .rdata / .loom）</p>
       </div>
 
       {/* Step 1: 样本列表 */}
       <div className="p-5 rounded-xl" style={{ background: "var(--clr-bg-card)", border: "1px solid var(--clr-border)" }}>
-        <StepAnchor step={1} title="添加样本" subtitle="为每个样本命名并上传对应的 ZIP 包" />
+        <StepAnchor step={1} title="添加样本" subtitle="为每个样本命名、填分组并上传对应的 ZIP / 矩阵文件" />
         <div className="space-y-3" style={{ maxHeight: "480px", overflowY: "auto" }}>
           {samples.map((s, idx) => (
             <div key={s.id} className="p-4 rounded-lg" style={{ background: "var(--clr-bg)", border: "1px solid var(--clr-border)" }}>
@@ -179,7 +328,7 @@ export default function ConvertPage() {
               >
                 <input
                   type="file"
-                  accept=".zip"
+                  accept=".zip,.rds,.h5ad,.h5seurat,.h5,.rdata,.loom"
                   className="hidden"
                   onChange={(e) => {
                     const f = e.target.files?.[0] || null;
@@ -187,7 +336,7 @@ export default function ConvertPage() {
                   }}
                 />
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={s.file ? "#15803d" : "var(--clr-amber)"} strokeWidth="2" strokeLinecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>
-                {s.file ? `${s.file.name} (${(s.file.size / 1024 / 1024).toFixed(1)} MB)` : "点击上传 ZIP 文件"}
+                {s.file ? `${s.file.name} (${(s.file.size / 1024 / 1024).toFixed(1)} MB)` : "点击上传 .zip (10X MTX) 或 .rds / .h5ad / .h5seurat / .h5"}
               </label>
             </div>
           ))}
@@ -231,7 +380,7 @@ export default function ConvertPage() {
 
       {/* 整合结果 */}
       {mergeResult && mergeResult.status === "success" && (
-        <div className="p-4 rounded-xl space-y-2" style={{ background: "rgba(22,163,74,0.05)", border: "1px solid rgba(22,163,74,0.15)" }}>
+        <div className="p-4 rounded-xl space-y-3" style={{ background: "rgba(22,163,74,0.05)", border: "1px solid rgba(22,163,74,0.15)" }}>
           <p className="text-sm font-semibold" style={{ color: "#15803d" }}>整合完成</p>
           <div className="text-xs space-y-1" style={{ color: "var(--clr-text-faint)" }}>
             <p>样本数: <strong style={{ color: "var(--clr-text)" }}>{mergeResult.n_samples}</strong></p>
@@ -239,10 +388,118 @@ export default function ConvertPage() {
             {mergeResult.genes != null && <p>总基因数: <strong style={{ color: "var(--clr-text)" }}>{mergeResult.genes.toLocaleString()}</strong></p>}
             {mergeResult.file_size_mb != null && <p>文件大小: <strong style={{ color: "var(--clr-text)" }}>{mergeResult.file_size_mb} MB</strong></p>}
           </div>
+
+          {mergeResult.output_path && (
+            <div className="p-3.5 rounded-lg space-y-3 bg-white border" style={{ borderColor: "var(--clr-border)" }}>
+              <div>
+                <p className="text-xs font-semibold" style={{ color: "var(--clr-text)" }}>
+                  直接导入分析项目（免下载重传）
+                </p>
+                <p className="text-[11px] mt-0.5" style={{ color: "var(--clr-text-faint)" }}>
+                  将合并后的 RDS 与样本分组自动导入所选项目，并跳转全流程分析页
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] font-medium mb-1" style={{ color: "var(--clr-text-muted)" }}>
+                    目标项目（未运行分析）
+                  </label>
+                  <select
+                    value={selectedProjectId}
+                    onChange={(e) => setSelectedProjectId(e.target.value)}
+                    disabled={importing}
+                    className="w-full text-xs px-2.5 py-2 rounded border bg-white"
+                    style={{ borderColor: "var(--clr-border)", color: "var(--clr-text)" }}
+                  >
+                    {projects.map((p) => (
+                      <option key={p.id} value={String(p.id)}>
+                        {p.name} ({p.species})
+                      </option>
+                    ))}
+                    <option value="__new__">+ 新建项目...</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-medium mb-1" style={{ color: "var(--clr-text-muted)" }}>
+                    项目内文件名
+                  </label>
+                  <input
+                    type="text"
+                    value={importFilename}
+                    onChange={(e) => setImportFilename(e.target.value)}
+                    disabled={importing}
+                    placeholder="merged_samples.rds"
+                    className="w-full text-xs px-2.5 py-2 rounded border bg-white"
+                    style={{ borderColor: "var(--clr-border)", color: "var(--clr-text)" }}
+                  />
+                </div>
+              </div>
+
+              {selectedProjectId === "__new__" && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+                  <div>
+                    <label className="block text-[11px] font-medium mb-1" style={{ color: "var(--clr-text-muted)" }}>
+                      新项目名称
+                    </label>
+                    <input
+                      type="text"
+                      value={newProjectName}
+                      onChange={(e) => setNewProjectName(e.target.value)}
+                      disabled={importing}
+                      placeholder="输入项目名称"
+                      className="w-full text-xs px-2.5 py-2 rounded border bg-white"
+                      style={{ borderColor: "var(--clr-border)", color: "var(--clr-text)" }}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-medium mb-1" style={{ color: "var(--clr-text-muted)" }}>
+                      物种
+                    </label>
+                    <select
+                      value={newProjectSpecies}
+                      onChange={(e) => setNewProjectSpecies(e.target.value as "human" | "mouse")}
+                      disabled={importing}
+                      className="w-full text-xs px-2.5 py-2 rounded border bg-white"
+                      style={{ borderColor: "var(--clr-border)", color: "var(--clr-text)" }}
+                    >
+                      <option value="human">human (人)</option>
+                      <option value="mouse">mouse (鼠)</option>
+                    </select>
+                  </div>
+                </div>
+              )}
+
+              {importError && (
+                <div className="p-2 rounded text-xs" style={{ background: "rgba(220,38,38,0.06)", border: "1px solid rgba(220,38,38,0.15)", color: "#b91c1c" }}>
+                  {importError}
+                </div>
+              )}
+
+              <button
+                type="button"
+                onClick={handleImportToProject}
+                disabled={importing}
+                className="w-full py-2.5 rounded-lg text-sm font-semibold text-white transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+                style={{ background: "linear-gradient(135deg, var(--clr-amber-dark), var(--clr-amber))" }}
+              >
+                {importing ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    {importStatus || "导入中..."}
+                  </>
+                ) : (
+                  "导入到项目并前往分析"
+                )}
+              </button>
+            </div>
+          )}
+
           {mergeResult.download_url && (
             <button
               onClick={() => authDownload(mergeResult.download_url!, `merged_${samples.length}samples.rds`)}
-              className="mt-2 w-full py-2 rounded-lg text-sm font-medium text-white transition-all"
+              className="w-full py-2 rounded-lg text-sm font-medium text-white transition-all"
               style={{ background: "linear-gradient(135deg, #15803d, #22c55e)" }}
             >
               下载整合 RDS

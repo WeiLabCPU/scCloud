@@ -6,7 +6,9 @@ scCloud v2 — 格式转换路由 (双向: 导入 + 导出)
 多样本整合: 多个 10X MTX ZIP → merge → RDS
 """
 
+import json
 import os
+import re
 import uuid
 import zipfile
 import shutil
@@ -25,11 +27,12 @@ from sqlalchemy.orm import Session
 
 from app.auth.deps import get_current_user
 from app.config import get_settings
-from app.db.models import User, get_db
+from app.db.models import Project, User, get_db
 from app.utils.storage_paths import (
     ensure_dir_mode,
     ensure_user_root,
     is_path_owned_by_user,
+    project_storage_dir,
     user_convert_dir,
 )
 
@@ -69,6 +72,23 @@ class MtxMergeResponse(BaseModel):
     file_size_mb: float | None = None
     output_path: str
     download_url: str | None = None
+
+
+class ConvertImportRequest(BaseModel):
+    """将转换/整合产物直接导入目标项目的请求。"""
+    source_path: str
+    project_id: int
+    filename: str | None = None
+
+
+class ConvertImportResponse(BaseModel):
+    """转换/整合产物导入项目响应。"""
+    status: str
+    project_id: int
+    filename: str
+    path: str
+    size_mb: float
+    sample_groups: dict[str, str] = {}
 
 
 # ===== 上传端点 =====
@@ -399,6 +419,156 @@ async def download_converted(
         abs_path,
         filename=os.path.basename(abs_path),
         media_type="application/octet-stream",
+    )
+
+
+@router.post("/import-to-project", response_model=ConvertImportResponse)
+async def import_converted_to_project(
+    req: ConvertImportRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    将 _convert 目录下的整合/转换结果（如 merged.rds 及 _groups.json）
+    安全复制到目标项目的 _uploaded/ 目录，免去用户下载后再分片重传。
+    """
+    settings = get_settings()
+
+    abs_src = os.path.realpath(req.source_path)
+    if not is_path_owned_by_user(
+        abs_src,
+        settings.projects_root,
+        current_user.id,
+        current_user.username,
+    ):
+        raise HTTPException(status_code=403, detail="无权访问此源文件")
+
+    if not os.path.isfile(abs_src):
+        raise HTTPException(status_code=404, detail="源文件不存在")
+
+    src_ext = os.path.splitext(abs_src)[1].lower()
+    raw_name = (req.filename or "").strip() or os.path.basename(abs_src)
+    safe_filename = os.path.basename(raw_name)
+    if (
+        not safe_filename
+        or safe_filename in (".", "..")
+        or safe_filename.startswith(".")
+        or ".." in safe_filename
+        or "/" in raw_name
+        or "\\" in raw_name
+        or re.search(r'[<>:"|?*\x00-\x1f]', safe_filename)
+    ):
+        raise HTTPException(status_code=400, detail="目标文件名非法")
+
+    target_ext = os.path.splitext(safe_filename)[1].lower()
+    if not target_ext:
+        safe_filename = f"{safe_filename}{src_ext}"
+        target_ext = src_ext
+
+    if target_ext not in RDS_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"不支持导入的文件类型: {target_ext}",
+        )
+
+    if current_user.total_quota and (current_user.used_quota or 0) >= current_user.total_quota:
+        raise HTTPException(
+            status_code=403,
+            detail="操作配额使用结束，无法继续进行。",
+        )
+
+    project = (
+        db.query(Project)
+        .filter(
+            Project.id == req.project_id,
+            Project.user_id == current_user.id,
+        )
+        .first()
+    )
+    if not project:
+        raise HTTPException(status_code=404, detail="项目不存在或无权访问")
+
+    if project.has_analyzed:
+        raise HTTPException(
+            status_code=403,
+            detail="该项目已完成分析，不能再导入新文件。如需重新分析请新建项目。",
+        )
+
+    if not project.storage_path:
+        project.storage_path = project_storage_dir(
+            settings.projects_root,
+            current_user.id,
+            current_user.username,
+            project.name,
+        )
+
+    dest_dir = os.path.join(project.storage_path, "_uploaded")
+    ensure_dir_mode(dest_dir, 0o777)
+
+    # 去重：移除同目标文件名的旧副本及伴生分组文件
+    for existing in os.listdir(dest_dir):
+        if existing.endswith(f"_{safe_filename}") or existing == safe_filename:
+            existing_path = os.path.join(dest_dir, existing)
+            if os.path.isfile(existing_path):
+                os.unlink(existing_path)
+                old_groups = existing_path + "_groups.json"
+                if os.path.isfile(old_groups):
+                    os.unlink(old_groups)
+
+    final_path = os.path.join(dest_dir, f"{uuid.uuid4().hex[:8]}_{safe_filename}")
+
+    # 必须使用 copyfile 而非 os.link：r-engine (uid=1000) 产出的 merged.rds 在 rootless/protected_hardlinks 下
+    # 跨 UID 硬链接给 backend (uid=10001) 会触发 EPERM
+    shutil.copyfile(abs_src, final_path)
+    try:
+        os.chmod(final_path, 0o666)
+    except OSError:
+        pass
+
+    sample_groups: dict[str, str] = {}
+    src_groups_path = abs_src + "_groups.json"
+    if not os.path.isfile(src_groups_path):
+        alt_groups = os.path.realpath(req.source_path + "_groups.json")
+        if is_path_owned_by_user(
+            alt_groups,
+            settings.projects_root,
+            current_user.id,
+            current_user.username,
+        ) and os.path.isfile(alt_groups):
+            src_groups_path = alt_groups
+    if os.path.isfile(src_groups_path):
+        try:
+            with open(src_groups_path, "r", encoding="utf-8") as gf:
+                parsed = json.load(gf)
+            if isinstance(parsed, dict):
+                sample_groups = {
+                    str(k): str(v)
+                    for k, v in parsed.items()
+                    if v is not None and str(v).strip()
+                }
+                if sample_groups:
+                    dest_groups = final_path + "_groups.json"
+                    with open(dest_groups, "w", encoding="utf-8") as out_gf:
+                        json.dump(sample_groups, out_gf, ensure_ascii=False)
+                    try:
+                        os.chmod(dest_groups, 0o666)
+                    except OSError:
+                        pass
+        except Exception:
+            sample_groups = {}
+
+    db_user = db.query(User).filter(User.id == current_user.id).first()
+    if db_user is not None:
+        db_user.used_quota = (db_user.used_quota or 0) + 1
+    db.commit()
+
+    return ConvertImportResponse(
+        status="imported",
+        project_id=project.id,
+        filename=safe_filename,
+        path=final_path,
+        size_mb=round(os.path.getsize(final_path) / (1024 * 1024), 2),
+        sample_groups=sample_groups,
     )
 
 
