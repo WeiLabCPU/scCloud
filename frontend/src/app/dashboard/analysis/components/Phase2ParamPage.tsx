@@ -20,11 +20,15 @@ interface Phase2ParamPageProps {
   species?: string;
 }
 
+function normalizeSpecies(species?: string): "Human" | "Mouse" {
+  return species?.toLowerCase() === "mouse" ? "Mouse" : "Human";
+}
+
 const DEFAULT_PARAMS = {
   markers: { cluster: "All", min_pct: 0.1, logfc_threshold: 0.25, p_val_adj: 0.05, test_use: "wilcox", only_pos: true, ntop: 5, group_by: "CellType", plot_format: "png" },
   enrich: { pathway: "GO", direction: "Up", pvalue_cutoff: 0.05, qvalue_cutoff: 0.2, n_term: 10, p_adjust_method: "BH", plot_format: "png" },
   monocle: { group_beam: "CellType", group_traj: "CellType", min_expr_threshold: 0.5, min_cells_pct: 0.01, mean_expr: 0.3, qvalue1: 1e-5, reverse: false, plot_format: "png" },
-  cellchat: { db_use: "Secreted", thresh: 0.05, min_cells: 10, prob_method: "triMean", top_pathways: 1, remove_isolate: false, plot_format: "png" },
+  cellchat: { species: "Human", db_use: "Secreted", thresh: 0.05, min_cells: 10, prob_method: "triMean", top_pathways: 1, remove_isolate: false, plot_format: "png" },
   infercnv: { cutoff_gene: 0.1, num_threads: 4, species: "Human", infer_df: [] as { cellType: string; refType: string }[], plot_format: "png" },
   wgcna: { interest_types: [] as string[], min_fraction: 0.05, sft_threshold: 0.8, module_score: "Seurat", k: 25, max_shared: 10, min_cells: 100, n_hubs: 10, n_genes_score: 25, plot_format: "png" },
 };
@@ -51,6 +55,7 @@ function buildCelltypeRenameMap(
 }
 
 export default function Phase2ParamPage({ pipeline, token, onComplete, species = "Human" }: Phase2ParamPageProps) {
+  const normalizedSpecies = normalizeSpecies(species);
   const [enabled, setEnabled] = useState<Record<string, boolean>>({
     markers: true,
     wgcna: false,
@@ -59,7 +64,11 @@ export default function Phase2ParamPage({ pipeline, token, onComplete, species =
     cellchat: false,
     infercnv: false,
   });
-  const [params, setParams] = useState(DEFAULT_PARAMS);
+  const [params, setParams] = useState(() => ({
+    ...DEFAULT_PARAMS,
+    cellchat: { ...DEFAULT_PARAMS.cellchat, species: normalizedSpecies },
+    infercnv: { ...DEFAULT_PARAMS.infercnv, species: normalizedSpecies },
+  }));
   const [showAdvanced, setShowAdvanced] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(false);
   // ── WGCNA 基因表达查询 ──
@@ -69,8 +78,17 @@ export default function Phase2ParamPage({ pipeline, token, onComplete, species =
   const [wgcnaDropdownOpen, setWgcnaDropdownOpen] = useState(false);
   const [wgcnaDropdownPos, setWgcnaDropdownPos] = useState<{ top: number; left: number; width: number }>({ top: 0, left: 0, width: 0 });
   const wgcnaBtnRef = React.useRef<HTMLButtonElement>(null);
+  const wgcnaMenuRef = React.useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [allCellTypes, setAllCellTypes] = useState<string[]>([]);
+
+  useEffect(() => {
+    setParams(prev => ({
+      ...prev,
+      cellchat: { ...prev.cellchat, species: normalizedSpecies },
+      infercnv: { ...prev.infercnv, species: normalizedSpecies },
+    }));
+  }, [normalizedSpecies]);
 
   // 从 annotate 结果中获取 CellType 列表
   const annotateTask = pipeline.tasks.find(t => t.step === "annotate");
@@ -82,7 +100,7 @@ export default function Phase2ParamPage({ pipeline, token, onComplete, species =
       if (!data) return;
       // 优先从 scatter_data.celltype 提取（与 Seurat 对象一致）
       // freq_table 可能在重命名后过时
-      const scatterCt = data.scatter_data?.celltype as string[] | undefined;
+      const scatterCt = (data.scatter_data as { celltype?: string[] } | undefined)?.celltype;
       const freqTable = data.freq_table as { CellType: string }[] | undefined;
       let types: string[] = [];
       if (scatterCt && scatterCt.length > 0) {
@@ -144,7 +162,12 @@ export default function Phase2ParamPage({ pipeline, token, onComplete, species =
   }, [loadCellTypes]);
 
   useEffect(() => {
-    const handleScroll = () => setWgcnaDropdownOpen(false);
+    const handleScroll = (e: Event) => {
+      if (wgcnaMenuRef.current && e.target instanceof Node && wgcnaMenuRef.current.contains(e.target)) {
+        return;
+      }
+      setWgcnaDropdownOpen(false);
+    };
     window.addEventListener("scroll", handleScroll, true);
     return () => window.removeEventListener("scroll", handleScroll, true);
   }, []);
@@ -190,10 +213,17 @@ export default function Phase2ParamPage({ pipeline, token, onComplete, species =
       const phase2Params: Record<string, Record<string, unknown>> = {};
       const fmt = (params.markers.plot_format as string) || "png";
       for (const step of enabledSteps) {
-        const stepParams = { ...params[step as keyof typeof params], plot_format: fmt };
+        const stepParams: Record<string, unknown> = {
+          ...(params[step as keyof typeof params] as Record<string, unknown>),
+          plot_format: fmt,
+        };
         // GSEA 不使用 direction 参数
         if (step === "enrich" && stepParams.pathway === "GSEA") {
           delete stepParams.direction;
+        }
+        // CellChat 与 inferCNV 强制透传规范化后的项目物种（Human / Mouse）
+        if (step === "cellchat" || step === "infercnv") {
+          stepParams.species = normalizedSpecies;
         }
         phase2Params[step] = stepParams;
       }
@@ -527,7 +557,7 @@ export default function Phase2ParamPage({ pipeline, token, onComplete, species =
                       <div>
                         <label className="block text-xs font-medium mb-1.5" style={{ color: "var(--clr-text-muted)" }}>物种</label>
                         <div className="px-2 py-1.5 rounded text-xs border" style={{ borderColor: "var(--clr-border)", background: "var(--clr-bg-alt)", color: "var(--clr-text-muted)" }}>
-                          {species}（自动）
+                          {normalizedSpecies}（自动）
                         </div>
                       </div>
                     </div>
@@ -587,6 +617,7 @@ export default function Phase2ParamPage({ pipeline, token, onComplete, species =
                         <>
                           <div className="fixed inset-0 z-[9998]" onClick={() => setWgcnaDropdownOpen(false)} />
                           <div
+                            ref={wgcnaMenuRef}
                             className="fixed z-[9999] rounded-lg border shadow-xl py-1"
                             style={{
                               top: wgcnaDropdownPos.top,
@@ -757,7 +788,7 @@ export default function Phase2ParamPage({ pipeline, token, onComplete, species =
       {/* 图片格式选择 */}
       <div className="flex items-center gap-2 px-3 py-2 rounded text-xs mb-3" style={{ background: "rgba(200,96,25,0.04)", border: "1px solid rgba(200,96,25,0.15)" }}>
         <span style={{ color: "var(--clr-text-muted)" }}>图片格式:</span>
-        <select value={(params.markers.plot_format as string) || "png"} onChange={(e) => { const v = e.target.value; setParams(prev => { const next = {...prev}; Object.keys(next).forEach(k => { next[k] = {...next[k], plot_format: v}; }); return next; }); }} style={{ border: "1px solid var(--clr-border)", borderRadius: 4, padding: "2px 6px", fontSize: 12, background: "white", color: "var(--clr-text)" }}>
+        <select value={(params.markers.plot_format as string) || "png"} onChange={(e) => { const v = e.target.value; setParams(prev => ({ markers: { ...prev.markers, plot_format: v }, enrich: { ...prev.enrich, plot_format: v }, monocle: { ...prev.monocle, plot_format: v }, cellchat: { ...prev.cellchat, plot_format: v }, infercnv: { ...prev.infercnv, plot_format: v }, wgcna: { ...prev.wgcna, plot_format: v } })); }} style={{ border: "1px solid var(--clr-border)", borderRadius: 4, padding: "2px 6px", fontSize: 12, background: "white", color: "var(--clr-text)" }}>
           <option value="png">PNG (默认)</option>
           <option value="pdf">PDF</option>
           <option value="svg">SVG (矢量·可编辑)</option>
@@ -791,12 +822,12 @@ export default function Phase2ParamPage({ pipeline, token, onComplete, species =
       </button>
 
       {/* WGCNA 基因表达弹窗 */}
-      {wgcnaActiveGene && wgcnaGenePos && typeof window !== undefined && pipeline.project_id && createPortal(
+      {wgcnaActiveGene && wgcnaGenePos && typeof window !== "undefined" && pipeline.project_id && createPortal(
         <GeneExpressionPopup
           gene={wgcnaActiveGene}
           projectId={pipeline.project_id}
           mousePos={wgcnaGenePos}
-          onMouseLeave={() => { setWgcnaActiveGene(null); setWgcnaGenePos(null); }}
+          onClose={() => { setWgcnaActiveGene(null); setWgcnaGenePos(null); }}
           token={token}
         />,
         document.body

@@ -8,7 +8,7 @@
 import { useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState, type MouseEvent } from "react";
 import ProjectSelector from "../../components/ProjectSelector";
-import { type Project, getAuthToken, tryRefresh } from "../../lib/api";
+import { type Project, authedFetch, getAuthToken } from "../../lib/api";
 import PipelineForm from "./components/PipelineForm";
 import PipelineView from "./components/PipelineView";
 
@@ -84,11 +84,7 @@ function AnalysisPageContent() {
     btn.disabled = true;
     try {
       const dlUrl = `/api/projects/${project.id}/download`;
-      let res = await fetch(dlUrl, { headers: { Authorization: `Bearer ${getAuthToken() || ""}` } });
-      if (res.status === 401) {
-        const nt = await tryRefresh();
-        if (nt) res = await fetch(dlUrl, { headers: { Authorization: `Bearer ${nt}` } });
-      }
+      const res = await authedFetch(dlUrl);
       if (!res.ok) {
         const errText = await res.text();
         throw new Error(`HTTP ${res.status}: ${errText.slice(0, 100)}`);
@@ -138,6 +134,7 @@ function AnalysisPageContent() {
           <div className="w-72">
             <ProjectSelector
               selectedId={project?.id ?? (initialProjectId ? Number(initialProjectId) : null)}
+              hasSelectedProject={project !== null}
               onSelect={handleProjectSelect}
             />
           </div>
@@ -158,6 +155,7 @@ function AnalysisPageContent() {
           {!activePipelineId ? (
             <PipelineForm
               projectId={project.id}
+              projectSpecies={project.species}
               token={getAuthToken() || ""}
               onSubmit={(pipelineId) => setActivePipelineIdPersist(pipelineId)}
               uploadedFiles={uploadedFiles}
@@ -171,6 +169,7 @@ function AnalysisPageContent() {
               pipelineId={activePipelineId}
               token={getAuthToken() || ""}
               projectName={project?.name}
+              projectSpecies={project.species}
             />
           )}
         </div>

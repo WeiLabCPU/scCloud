@@ -17,8 +17,12 @@ export interface PipelineTask {
   status: "pending" | "running" | "completed" | "failed" | "cancelled" | "paused";
   progress: number;
   progress_message?: string;
+  params?: Record<string, unknown> | null;
   result_path?: string;
   error_msg?: string;
+  started_at?: string;
+  completed_at?: string;
+  created_at?: string;
 }
 
 export interface ResumePipelineParams {
@@ -34,6 +38,7 @@ export interface Pipeline {
   current_step?: string;
   error_step?: string;
   error_msg?: string;
+  params?: Record<string, unknown>;
   created_at?: string;
   started_at?: string;
   completed_at?: string;

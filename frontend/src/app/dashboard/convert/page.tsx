@@ -7,7 +7,7 @@
 "use client";
 
 import { useState, useCallback } from "react";
-import { apiFetch, getAuthToken} from "../../lib/api";
+import { apiFetch, authedFetch } from "../../lib/api";
 
 /* ===== 接口类型 ===== */
 interface MergeResult {
@@ -48,10 +48,7 @@ function StepAnchor({ step, title, subtitle }: { step: number; title: string; su
 
 /* ===== 带认证下载 ===== */
 async function authDownload(url: string, filename: string) {
-  const token = getAuthToken();
-  const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
+  const res = await authedFetch(url);
   if (!res.ok) throw new Error("下载失败");
   const blob = await res.blob();
   const a = document.createElement("a");
@@ -132,7 +129,7 @@ export default function ConvertPage() {
       </div>
 
       {/* Step 1: 样本列表 */}
-      <div className="p-5 rounded-xl" style={{ background: "var(--clr-card)", border: "1px solid var(--clr-border)" }}>
+      <div className="p-5 rounded-xl" style={{ background: "var(--clr-bg-card)", border: "1px solid var(--clr-border)" }}>
         <StepAnchor step={1} title="添加样本" subtitle="为每个样本命名并上传对应的 ZIP 包" />
         <div className="space-y-3" style={{ maxHeight: "480px", overflowY: "auto" }}>
           {samples.map((s, idx) => (
@@ -206,7 +203,7 @@ export default function ConvertPage() {
       </div>
 
       {/* Step 2: 整合按钮 */}
-      <div className="p-5 rounded-xl" style={{ background: "var(--clr-card)", border: "1px solid var(--clr-border)" }}>
+      <div className="p-5 rounded-xl" style={{ background: "var(--clr-bg-card)", border: "1px solid var(--clr-border)" }}>
         <StepAnchor step={2} title="执行整合" subtitle={`已选 ${samples.filter((s) => s.file).length} / ${samples.length} 个样本`} />
         <button
           onClick={handleMerge}

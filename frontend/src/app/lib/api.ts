@@ -33,19 +33,25 @@ function clearAllAuth(): void {
 
 /* ===== Refresh Token 自动续期机制 ===== */
 
+interface RefreshOutcome {
+  token: string | null;
+  authRejected: boolean;
+}
+
 /**
  * 共享的刷新锁 — 防止多个并发请求同时触发 refresh。
  * 第一个遇到 401 的请求执行 refresh，后续请求等待同一个 Promise。
  */
-let refreshPromise: Promise<string | null> | null = null;
+let refreshDetailedPromise: Promise<RefreshOutcome> | null = null;
+let guestFallbackPromise: Promise<string | null> | null = null;
 
 /**
  * 调用 POST /api/auth/refresh 获取新的 access_token。
- * 成功时更新对应 storage 并返回新 token；失败返回 null。
+ * 区分鉴权明确拒绝 (401/403 / 无 refresh_token) 与瞬时网络/5xx 故障。
  */
-async function doRefreshToken(): Promise<string | null> {
+async function doRefreshTokenDetailed(): Promise<RefreshOutcome> {
   const refreshToken = getAuthItem("refresh_token");
-  if (!refreshToken) return null;
+  if (!refreshToken) return { token: null, authRejected: true };
 
   // 有标签页会话写 sessionStorage，否则写 localStorage
   const hasTabSession = typeof window !== "undefined" && sessionStorage.getItem("access_token") !== null;
@@ -58,7 +64,12 @@ async function doRefreshToken(): Promise<string | null> {
       body: JSON.stringify({ refresh_token: refreshToken }),
     });
 
-    if (!res.ok) return null;
+    if (res.status === 401 || res.status === 403) {
+      return { token: null, authRejected: true };
+    }
+    if (!res.ok) {
+      return { token: null, authRejected: false };
+    }
 
     const data = await res.json();
     storage.setItem("access_token", data.access_token);
@@ -69,10 +80,22 @@ async function doRefreshToken(): Promise<string | null> {
       storage.setItem("username", data.username);
       storage.setItem("role", data.role || "user");
     }
-    return data.access_token as string;
+    if (data.is_guest !== undefined) {
+      storage.setItem("is_guest", data.is_guest ? "true" : "false");
+    }
+    return { token: data.access_token as string, authRejected: false };
   } catch {
-    return null;
+    return { token: null, authRejected: false };
   }
+}
+
+async function tryRefreshDetailed(): Promise<RefreshOutcome> {
+  if (!refreshDetailedPromise) {
+    refreshDetailedPromise = doRefreshTokenDetailed().finally(() => {
+      refreshDetailedPromise = null;
+    });
+  }
+  return refreshDetailedPromise;
 }
 
 /**
@@ -80,12 +103,8 @@ async function doRefreshToken(): Promise<string | null> {
  * 多个请求同时 401 时，只有第一个真正执行 refresh，其余复用结果。
  */
 export async function tryRefresh(): Promise<string | null> {
-  if (!refreshPromise) {
-    refreshPromise = doRefreshToken().finally(() => {
-      refreshPromise = null;
-    });
-  }
-  return refreshPromise;
+  const { token } = await tryRefreshDetailed();
+  return token;
 }
 
 /** 清除登录态并跳转首页 */
@@ -97,8 +116,8 @@ function forceLogout(): never {
   return undefined as never;
 }
 
-/** Guest 登录兜底 — 当 refresh 失败时自动获取新 guest token（存入 sessionStorage） */
-async function guestLoginFallback(): Promise<string | null> {
+/** Guest 登录兜底 — 仅允许原本即为游客的会话重建新 guest token（带并发互斥锁） */
+async function doGuestLoginFallback(): Promise<string | null> {
   try {
     const res = await fetch(`${API_BASE}/api/auth/guest`, { method: "POST" });
     if (!res.ok) return null;
@@ -112,6 +131,15 @@ async function guestLoginFallback(): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+async function guestLoginFallback(): Promise<string | null> {
+  if (!guestFallbackPromise) {
+    guestFallbackPromise = doGuestLoginFallback().finally(() => {
+      guestFallbackPromise = null;
+    });
+  }
+  return guestFallbackPromise;
 }
 
 /** 通用 fetch 封装 — 自动注入 auth header + 401 自动续期 */
@@ -142,7 +170,8 @@ export async function apiFetch<T>(
   if (!res.ok) {
     /* 401 = token 过期 → 尝试用 refresh_token 续期 */
     if (res.status === 401 && typeof window !== "undefined") {
-      const newToken = await tryRefresh();
+      const wasGuest = isGuest();
+      const { token: newToken, authRejected } = await tryRefreshDetailed();
       if (newToken) {
         /* 续期成功 — 用新 token 重试原请求 */
         headers["Authorization"] = `Bearer ${newToken}`;
@@ -155,32 +184,45 @@ export async function apiFetch<T>(
           return retry.json();
         }
         if (retry.status === 401) {
-          /* 重试仍 401 → 尝试 guest 登录兜底 */
-          const guestToken = await guestLoginFallback();
-          if (guestToken) {
-            headers["Authorization"] = `Bearer ${guestToken}`;
-            const retry2 = await fetch(`${API_BASE}${path}`, { ...options, headers });
-            if (retry2.ok) {
-              if (retry2.status === 204) return undefined as T;
-              return retry2.json();
+          /* 仅原本即为游客的会话才允许重建游客；正式账号直接登出 */
+          if (wasGuest) {
+            const guestToken = await guestLoginFallback();
+            if (guestToken) {
+              headers["Authorization"] = `Bearer ${guestToken}`;
+              const retry2 = await fetch(`${API_BASE}${path}`, { ...options, headers });
+              if (retry2.ok) {
+                if (retry2.status === 204) return undefined as T;
+                return retry2.json();
+              }
             }
           }
           forceLogout();
         }
-        const text = await retry.text();
-        throw new Error(`API ${retry.status}: ${text}`);
+        let retryText = await retry.text();
+        try {
+          const j = JSON.parse(retryText);
+          if (j.detail) retryText = j.detail;
+        } catch {}
+        throw new Error(retryText || `API ${retry.status}`);
       }
-      /* refresh 也失败 → 尝试 guest 登录兜底 */
-      const guestToken = await guestLoginFallback();
-      if (guestToken) {
-        headers["Authorization"] = `Bearer ${guestToken}`;
-        const retry = await fetch(`${API_BASE}${path}`, { ...options, headers });
-        if (retry.ok) {
-          if (retry.status === 204) return undefined as T;
-          return retry.json();
+
+      /* refresh 失败：游客可重签游客；正式账号仅在明确拒绝时跳回登录，网络抖动不降级也不清凭证 */
+      if (wasGuest) {
+        const guestToken = await guestLoginFallback();
+        if (guestToken) {
+          headers["Authorization"] = `Bearer ${guestToken}`;
+          const retry = await fetch(`${API_BASE}${path}`, { ...options, headers });
+          if (retry.ok) {
+            if (retry.status === 204) return undefined as T;
+            return retry.json();
+          }
         }
+        forceLogout();
       }
-      forceLogout();
+      if (authRejected) {
+        forceLogout();
+      }
+      throw new Error("网络连接异常，登录状态校验失败，请稍后重试");
     }
 
     let text = await res.text(); try { const j = JSON.parse(text); if (j.detail) text = j.detail; } catch {}
@@ -205,13 +247,48 @@ export async function authedFetch(path: string, options: RequestInit = {}): Prom
   };
   let res = await doFetch(getAuthItem("access_token"));
   if (res.status === 401 && typeof window !== "undefined") {
-    const nt = await tryRefresh();
-    if (nt) res = await doFetch(nt);
+    const wasGuest = isGuest();
+    const { token: nt, authRejected } = await tryRefreshDetailed();
+    if (nt) {
+      res = await doFetch(nt);
+      if (res.status === 401) {
+        if (wasGuest) {
+          const guestTok = await guestLoginFallback();
+          if (guestTok) res = await doFetch(guestTok);
+          if (res.status === 401) forceLogout();
+        } else {
+          forceLogout();
+        }
+      }
+    } else if (wasGuest) {
+      const guestTok = await guestLoginFallback();
+      if (guestTok) res = await doFetch(guestTok);
+      if (res.status === 401) forceLogout();
+    } else if (authRejected) {
+      forceLogout();
+    }
   }
   return res;
 }
 
 /* ===== Auth ===== */
+
+export interface UserInfo {
+  id: number;
+  username: string;
+  email: string | null;
+  role: string;
+  max_projects: number;
+  total_quota: number;
+  used_quota: number;
+  is_active: boolean;
+  is_guest: boolean;
+  retention_days: number;
+}
+
+export async function getCurrentUser(): Promise<UserInfo> {
+  return apiFetch<UserInfo>("/api/auth/me");
+}
 
 interface AuthResponse {
   role?: string;

@@ -86,9 +86,10 @@ interface PipelineViewProps {
   pipelineId: string;
   token: string;
   projectName?: string;
+  projectSpecies?: string;
 }
 
-export default function PipelineView({ pipelineId, token, projectName }: PipelineViewProps) {
+export default function PipelineView({ pipelineId, token, projectName, projectSpecies }: PipelineViewProps) {
   const router = useRouter();
   const [pipeline, setPipeline] = useState<Pipeline | null>(null);
   const [loading, setLoading] = useState(true);
@@ -244,7 +245,8 @@ export default function PipelineView({ pipelineId, token, projectName }: Pipelin
 
   // Phase 2 步骤是否已配置/执行
   const enabledPhase2 = (pipeline.params?.enabled_steps as string[]) || [];
-  const hasPhase2Tasks = (pipeline.tasks || []).some(t => ["monocle", "cellchat", "infercnv", "wgcna"].includes(t.step));
+  const hasPhase2Tasks = (pipeline.tasks || []).some(t => ["monocle", "cellchat", "infercnv", "wgcna", "markers", "enrich"].includes(t.step));
+  const annotateCompleted = (pipeline.tasks || []).some((t) => t.step === "annotate" && t.status === "completed");
   // 始终显示所有步骤
   const visibleSteps = STEPS;
 
@@ -311,10 +313,17 @@ export default function PipelineView({ pipelineId, token, projectName }: Pipelin
                 style={{ color: "var(--clr-text)" }}
                 onClick={async () => {
                   setShowBackMenu(false);
+                  if (!annotateCompleted) {
+                    alert("基础分析（Phase 1 细胞注释）尚未完成，暂无法配置 Phase 2。如需中止当前运行请点击「停止分析」或「重新设置 Phase 1」。");
+                    return;
+                  }
                   if (pipeline.status === "running" || pipeline.status === "pending") {
+                    if (!confirm("当前 Phase 2 分析正在运行，重新设置将停止正在执行的步骤（已完成结果保留），确定继续吗？")) {
+                      return;
+                    }
                     try {
                       await apiFetch(`/api/pipeline/${pipelineId}/cancel`, { method: "POST" });
-                      const data = await apiFetch(`/api/pipeline/${pipelineId}`);
+                      const data = await getPipeline(token, pipelineId);
                       setPipeline(data);
                     } catch {}
                   }
@@ -367,38 +376,73 @@ export default function PipelineView({ pipelineId, token, projectName }: Pipelin
         </div>
       )}
 
-      {/* 暂停提示 + 参数设置按钮 */}
-      {(pipeline.status === "paused" || pipeline.status === "failed" || pipeline.status === "completed" || pipeline.status === "cancelled") && !showPhase2Param && pipeline.tasks.some(function(t) { return t.step === "annotate" && t.status === "completed"; }) && (
-        <div className="w-full rounded-lg border px-4 py-3" style={{ borderColor: "#93c5fd", background: "rgba(59,130,246,0.05)" }}>
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex items-start gap-3 text-left">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="2" strokeLinecap="round" className="shrink-0 mt-0.5"><circle cx="12" cy="12" r="10" /><path d="M12 8v4M12 16h.01" /></svg>
-              <span className="text-xs" style={{ color: "#1e40af" }}>
-                细胞注释已完成，请查看注释结果。确认无误后点击"设置后续分析参数"配置 Phase 2 分析。
-              </span>
+      {/* Phase 1 完成/全流程完成提示 + 参数设置按钮 */}
+      {(pipeline.status === "paused" || pipeline.status === "failed" || pipeline.status === "completed" || pipeline.status === "cancelled") && !showPhase2Param && annotateCompleted && (
+        pipeline.status === "completed" && (hasPhase2Tasks || enabledPhase2.length > 0) ? (
+          <div className="w-full rounded-lg border px-4 py-3" style={{ borderColor: "#86efac", background: "rgba(34,197,94,0.06)" }}>
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-start gap-3 text-left">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#16a34a" strokeWidth="2" strokeLinecap="round" className="shrink-0 mt-0.5"><polyline points="20 6 9 17 4 12" /></svg>
+                <span className="text-xs" style={{ color: "#166534" }}>
+                  全流程分析已完成，可在下方切换各步骤查看与下载结果；如需调整参数加跑其他模块，可重新配置后续分析。
+                </span>
+              </div>
+              <button
+                onClick={() => { if (!hasPhase2Access()) { setShowUpgradeDialog(true); } else { setShowPhase2Param(true); } }}
+                className="px-4 py-1.5 text-sm rounded font-medium shrink-0"
+                style={{ background: "var(--clr-amber)", color: "white", cursor: "pointer" }}
+              >
+                重新配置后续分析
+              </button>
             </div>
-            <button
-              onClick={() => { if (!hasPhase2Access()) { setShowUpgradeDialog(true); } else { setShowPhase2Param(true); } }}
-              className="px-4 py-1.5 text-sm rounded font-medium shrink-0"
-              style={{ background: "#3b82f6", color: "white", cursor: "pointer" }}
-            >
-              设置后续分析参数
-            </button>
           </div>
-        </div>
+        ) : (
+          <div className="w-full rounded-lg border px-4 py-3" style={{ borderColor: "#93c5fd", background: "rgba(59,130,246,0.05)" }}>
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-start gap-3 text-left">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="2" strokeLinecap="round" className="shrink-0 mt-0.5"><circle cx="12" cy="12" r="10" /><path d="M12 8v4M12 16h.01" /></svg>
+                <span className="text-xs" style={{ color: "#1e40af" }}>
+                  细胞注释已完成，请查看注释结果。确认无误后点击"设置后续分析参数"配置 Phase 2 分析。
+                </span>
+              </div>
+              <button
+                onClick={() => { if (!hasPhase2Access()) { setShowUpgradeDialog(true); } else { setShowPhase2Param(true); } }}
+                className="px-4 py-1.5 text-sm rounded font-medium shrink-0"
+                style={{ background: "#3b82f6", color: "white", cursor: "pointer" }}
+              >
+                设置后续分析参数
+              </button>
+            </div>
+          </div>
+        )
       )}
 
       {/* Phase 2 参数选择页 */}
-      {(pipeline.status === "paused" || pipeline.status === "failed" || pipeline.status === "completed" || pipeline.status === "cancelled") && showPhase2Param && pipeline.tasks.some(function(t) { return t.step === "annotate" && t.status === "completed"; }) && (
-        <Phase2ParamPage
-          pipeline={pipeline}
-          token={token}
-          species={pipeline.params?.annotate?.species as string || "Human"}
-          onComplete={() => {
-            setShowPhase2Param(false);
-            getPipeline(token, pipelineId).then(setPipeline).catch(() => {});
-          }}
-        />
+      {(pipeline.status === "paused" || pipeline.status === "failed" || pipeline.status === "completed" || pipeline.status === "cancelled") && showPhase2Param && annotateCompleted && (
+        <div className="space-y-2">
+          <div className="flex items-center justify-between px-4 py-2 rounded-lg border" style={{ borderColor: "var(--clr-border)", background: "var(--clr-bg-alt)" }}>
+            <span className="text-xs font-medium" style={{ color: "var(--clr-text-muted)" }}>
+              Phase 2 后续分析参数配置（收起后可继续查看下方细胞注释结果）
+            </span>
+            <button
+              type="button"
+              onClick={() => setShowPhase2Param(false)}
+              className="px-3 py-1 rounded text-xs font-medium transition-colors"
+              style={{ border: "1px solid var(--clr-border)", background: "var(--clr-bg-card)", color: "var(--clr-text)", cursor: "pointer" }}
+            >
+              收起参数面板 ↑
+            </button>
+          </div>
+          <Phase2ParamPage
+            pipeline={pipeline}
+            token={token}
+            species={((pipeline.params?.annotate as Record<string, unknown> | undefined)?.species as string) || projectSpecies || "Human"}
+            onComplete={() => {
+              setShowPhase2Param(false);
+              getPipeline(token, pipelineId).then(setPipeline).catch(() => {});
+            }}
+          />
+        </div>
       )}
 
       {/* 双面板布局 */}
@@ -512,9 +556,9 @@ export default function PipelineView({ pipelineId, token, projectName }: Pipelin
                   {rcCurrentStatus === "running" && rcCurrentTask && (
                     <ProgressTracker
                       taskId={rcCurrentTask.id}
-                      onMessage={() => {}}
-                      onProgress={() => {}}
+                      stepLabel={reduceClusterTab === "cluster" ? "批次聚类" : "数据降维"}
                       onComplete={() => { getPipeline(token, pipelineId).then(setPipeline).catch(() => {}); }}
+                      onError={() => { getPipeline(token, pipelineId).then(setPipeline).catch(() => {}); }}
                     />
                   )}
 
@@ -522,17 +566,22 @@ export default function PipelineView({ pipelineId, token, projectName }: Pipelin
                     <ResultViewer
                       projectName={projectName}
                       stepId={reduceClusterTab}
+                      stepLabel={reduceClusterTab === "cluster" ? "批次聚类" : "数据降维"}
+                      StepIcon={activeStepDef.Icon}
                       task={{
                         id: rcCurrentTask.id,
                         step: rcCurrentTask.step,
-                        status: rcCurrentTask.status,
-                        params: {},
+                        status: rcCurrentTask.status === "paused" ? "completed" : rcCurrentTask.status,
+                        params: rcCurrentTask.params ?? {},
                         progress: 100,
-                        result_path: rcCurrentTask.result_path,
-                        result: null,
+                        progress_message: rcCurrentTask.progress_message ?? null,
+                        result_path: rcCurrentTask.result_path ?? null,
+                        error_msg: rcCurrentTask.error_msg ?? null,
+                        started_at: rcCurrentTask.started_at ?? null,
+                        completed_at: rcCurrentTask.completed_at ?? null,
+                        created_at: rcCurrentTask.created_at ?? "",
                         project_id: pipeline.project_id,
-                      } as Task}
-                      token={token}
+                      } satisfies Task}
                     />
                   )}
 
@@ -643,17 +692,22 @@ export default function PipelineView({ pipelineId, token, projectName }: Pipelin
                       <ResultViewer
                         projectName={projectName}
                         stepId={subId}
+                        stepLabel={subLabel || activeStepDef.label}
+                        StepIcon={activeStepDef.Icon}
                         task={{
                           id: subTask.id,
                           step: subTask.step,
-                          status: subTask.status,
-                          params: {},
+                          status: subTask.status === "paused" ? "completed" : subTask.status,
+                          params: subTask.params ?? {},
                           progress: 100,
-                          result_path: subTask.result_path,
-                          result: null,
+                          progress_message: subTask.progress_message ?? null,
+                          result_path: subTask.result_path ?? null,
+                          error_msg: subTask.error_msg ?? null,
+                          started_at: subTask.started_at ?? null,
+                          completed_at: subTask.completed_at ?? null,
+                          created_at: subTask.created_at ?? "",
                           project_id: pipeline.project_id,
-                        } as Task}
-                        token={token}
+                        } satisfies Task}
                       />
                     )}
 

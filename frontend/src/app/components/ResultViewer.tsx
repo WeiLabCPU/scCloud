@@ -11,7 +11,7 @@
 "use client";
 
 import React, { Component, type ComponentType, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
-import { type Task, submitTask, getTask, apiFetch, tryRefresh, getAuthToken} from "../lib/api";
+import { type Task, submitTask, getTask, apiFetch, authedFetch, getAuthToken} from "../lib/api";
 import ProgressTracker from "./ProgressTracker";
 
 import QCResultTabs from "./QCResultTabs";
@@ -126,14 +126,29 @@ function AuthImg({ src, alt, className, style }: {
 
   useEffect(() => {
     if (!src) return;
+    const controller = new AbortController();
     let objectUrl = "";
     setFailed(false);
     setBlobUrl(null);
-    fetchWithAuth(src)
-      .then((r) => { if (!r.ok) throw new Error(`${r.status}`); const ct = r.headers.get("content-type") || ""; return r.blob().then(blob => ({ blob, isPdf: ct.includes("pdf") })); })
-      .then(({ blob, isPdf: pdf }) => { objectUrl = URL.createObjectURL(blob); setBlobUrl(objectUrl); setIsPdf(pdf); })
-      .catch(() => setFailed(true));
-    return () => { if (objectUrl) URL.revokeObjectURL(objectUrl); };
+    authedFetch(src, { signal: controller.signal })
+      .then((r) => {
+        if (!r.ok) throw new Error(`${r.status}`);
+        const ct = r.headers.get("content-type") || "";
+        return r.blob().then((blob) => ({ blob, isPdf: ct.includes("pdf") }));
+      })
+      .then(({ blob, isPdf: pdf }) => {
+        if (controller.signal.aborted) return;
+        objectUrl = URL.createObjectURL(blob);
+        setBlobUrl(objectUrl);
+        setIsPdf(pdf);
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setFailed(true);
+      });
+    return () => {
+      controller.abort();
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
   }, [src]);
 
   if (!src || failed) return <div className="callout text-xs py-6 text-center" style={{ color: "var(--clr-text-faint)" }}>图片暂不可用（请重新运行该步骤）</div>;
@@ -148,7 +163,7 @@ function AuthImg({ src, alt, className, style }: {
 /** 
  * 带 Bearer token 的文件下载按钮组件。
  */
-function AuthDownloadLink({ url, filename, className, style, children }: { url: string, filename: string, className?: string, style?: React.CSSProperties, children: React.ReactNode }) {
+function AuthDownloadLink({ url, filename, className, style, title, children }: { url: string, filename: string, className?: string, style?: React.CSSProperties, title?: string, children: React.ReactNode }) {
   const [downloading, setDownloading] = useState(false);
 
   const handleDownload = async (e: React.MouseEvent) => {
@@ -156,7 +171,7 @@ function AuthDownloadLink({ url, filename, className, style, children }: { url: 
     if (downloading) return;
     setDownloading(true);
     try {
-      const res = await fetchWithAuth(url);
+      const res = await authedFetch(url);
       if (!res.ok) throw new Error("下载失败");
       const blob = await res.blob();
       const blobUrl = URL.createObjectURL(blob);
@@ -175,7 +190,7 @@ function AuthDownloadLink({ url, filename, className, style, children }: { url: 
   };
 
   return (
-    <button onClick={handleDownload} disabled={downloading} className={className} style={style}>
+    <button onClick={handleDownload} disabled={downloading} className={className} style={style} title={title}>
       {downloading ? <span className="opacity-70 flex items-center gap-1"><span className="w-3 h-3 border-2 border-t-transparent rounded-full animate-spin"></span> 下载中...</span> : children}
     </button>
   );
@@ -197,41 +212,10 @@ function getToken(): string {
   return getAuthToken() || "";
 }
 
-/**
- * 带 401 自动续期的 fetch 封装（用于 blob/非 JSON 响应）。
- * apiFetch 只处理 JSON，图片/blob 下载需要单独处理。
- */
-async function fetchWithAuth(url: string, init?: RequestInit): Promise<Response> {
-  const token = getToken();
-  const headers = { ...(init?.headers as Record<string, string>), Authorization: `Bearer ${token}` };
-  const res = await fetch(url, { ...init, headers });
-  if (res.status === 401) {
-    // 先尝试 refresh token 续期
-    const newToken = await tryRefresh();
-    if (newToken) {
-      const retry = await fetch(url, { ...init, headers: { ...(init?.headers as Record<string, string>), Authorization: `Bearer ${newToken}` } });
-      if (retry.ok) return retry;
-    }
-    // refresh 失败（guest token 过期等），重新 guest 登录
-    try {
-      const guestRes = await fetch("/api/auth/guest", { method: "POST" });
-      if (guestRes.ok) {
-        const data = await guestRes.json();
-        sessionStorage.setItem("access_token", data.access_token);
-        if (data.refresh_token) sessionStorage.setItem("refresh_token", data.refresh_token);
-        if (data.username) sessionStorage.setItem("username", data.username);
-        const retry2 = await fetch(url, { ...init, headers: { ...(init?.headers as Record<string, string>), Authorization: `Bearer ${data.access_token}` } });
-        if (retry2.ok) return retry2;
-      }
-    } catch { /* ignore */ }
-  }
-  return res;
-}
-
 /** 获取任务结果 JSON — 使用 apiFetch 自动处理 401 token 续期 */
-async function fetchTaskResult(taskId: string): Promise<Record<string, unknown> | null> {
+async function fetchTaskResult(taskId: string, signal?: AbortSignal): Promise<Record<string, unknown> | null> {
   try {
-    return await apiFetch<Record<string, unknown>>(`/api/tasks/${taskId}/result`);
+    return await apiFetch<Record<string, unknown>>(`/api/tasks/${taskId}/result`, signal ? { signal } : undefined);
   } catch {
     return null;
   }
@@ -295,11 +279,14 @@ export default function ResultViewer({ task, stepId, stepLabel, StepIcon, taskCa
     if (!task || task.status !== "completed") return;
     // QC 步骤由 QCResultTabs 自行管理
     if (stepId === "qc") return;
+    const controller = new AbortController();
     setLoadingResult(true);
-    fetchTaskResult(task.id).then((data) => {
+    fetchTaskResult(task.id, controller.signal).then((data) => {
+      if (controller.signal.aborted) return;
       setResultData(data);
       setLoadingResult(false);
     });
+    return () => controller.abort();
   }, [resultRequested, task?.id, task?.status, stepId]);
 
   /* ── 没有任务 ── */
@@ -365,19 +352,19 @@ export default function ResultViewer({ task, stepId, stepLabel, StepIcon, taskCa
           </div>
         )}
 
-        {/* ── 非 QC 步骤：数据加载后渲染 ── */}
+        {/* ── 非 QC 步骤：数据加载后渲染（key={task.id} 隔离不同项目与任务状态） ── */}
         {needsResultData && resultRequested && !loadingResult && (
           <>
-            {stepId === "normalize" && resultData && <NormalizeResult data={resultData} taskId={task.id} />}
-            {stepId === "reduce"    && <ReduceResult data={resultData} taskId={task.id} />}
-            {stepId === "cluster"   && <ClusterResult data={resultData} task={task} />}
-            {stepId === "markers"   && <MarkersResult data={resultData} task={task} taskCache={taskCache} clusterLevels={clusterLevels} projectName={projectName} />}
-            {stepId === "enrich"    && <EnrichResult data={resultData} taskId={task.id} />}
-            {stepId === "wgcna"     && <WGCNAResult data={resultData} taskId={task.id} />}
-            {stepId === "annotate" && <AnnotateResult data={resultData} task={task} token={getToken()} />}
-            {stepId === "marker_expr" && <MarkerExprResult data={resultData} taskId={task.id} task={task} />}
+            {stepId === "normalize" && resultData && <NormalizeResult key={task.id} data={resultData} taskId={task.id} />}
+            {stepId === "reduce"    && <ReduceResult key={task.id} data={resultData} taskId={task.id} />}
+            {stepId === "cluster"   && <ClusterResult key={task.id} data={resultData} task={task} />}
+            {stepId === "markers"   && <MarkersResult key={task.id} data={resultData} task={task} taskCache={taskCache} clusterLevels={clusterLevels} projectName={projectName} />}
+            {stepId === "enrich"    && <EnrichResult key={task.id} data={resultData} taskId={task.id} />}
+            {stepId === "wgcna"     && <WGCNAResult key={task.id} data={resultData} taskId={task.id} />}
+            {stepId === "annotate" && <AnnotateResult key={task.id} data={resultData} task={task} token={getToken()} />}
+            {stepId === "marker_expr" && <MarkerExprResult key={task.id} data={resultData} taskId={task.id} task={task} />}
             {!["qc","normalize","reduce","cluster","markers","enrich","wgcna","annotate","marker_expr"].includes(stepId) && (
-              <GenericStepResult data={resultData} stepId={stepId} taskId={task.id} task={task} />
+              <GenericStepResult key={task.id} data={resultData} stepId={stepId} taskId={task.id} task={task} />
             )}
           </>
         )}
@@ -410,7 +397,7 @@ function NormalizeResult({ data, taskId }: { data: Record<string, unknown>; task
     if (!resultFileName || !taskId) return;
     const url = `/api/tasks/${taskId}/plot?name=${encodeURIComponent(resultFileName)}`;
     try {
-      const res = await fetchWithAuth(url);
+      const res = await authedFetch(url);
       if (!res.ok) throw new Error(`${res.status}`);
       const blob = await res.blob();
       const a = document.createElement("a");
@@ -951,14 +938,16 @@ function ClusterResult({ data, task }: { data: Record<string, unknown> | null; t
           <div className="relative w-full">
             <AuthImg src={sankeySrc} alt="Sample Cluster Proportion"
               className="w-full rounded border" style={{ border: "1px solid var(--clr-border)", background: "#fff" }} />
-            <AuthDownloadLink
-              url={sankeyDownloadSrc || sankeySrc}
-              filename={sankeyDownloadName || sankeyName}
-              className="absolute bottom-3 right-3 inline-flex items-center justify-center w-9 h-9 rounded-lg transition-all hover:scale-110"
-              style={{ background: "rgba(255,255,255,0.92)", boxShadow: "0 2px 8px rgba(0,0,0,0.10)", color: "var(--clr-amber)" }}
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-            </AuthDownloadLink>
+            {(sankeyDownloadSrc || sankeySrc) && (
+              <AuthDownloadLink
+                url={(sankeyDownloadSrc || sankeySrc)!}
+                filename={sankeyDownloadName || sankeyName}
+                className="absolute bottom-3 right-3 inline-flex items-center justify-center w-9 h-9 rounded-lg transition-all hover:scale-110"
+                style={{ background: "rgba(255,255,255,0.92)", boxShadow: "0 2px 8px rgba(0,0,0,0.10)", color: "var(--clr-amber)" }}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              </AuthDownloadLink>
+            )}
           </div>
         </div>
       )}
@@ -970,14 +959,16 @@ function ClusterResult({ data, task }: { data: Record<string, unknown> | null; t
           <div className="relative w-full">
             <AuthImg src={groupSrc} alt="Group Cluster UMAP"
               className="w-full rounded border" style={{ border: "1px solid var(--clr-border)", background: "#fff" }} />
-            <AuthDownloadLink
-              url={groupDownloadSrc || groupSrc}
-              filename={groupDownloadName || groupName}
-              className="absolute bottom-3 right-3 inline-flex items-center justify-center w-9 h-9 rounded-lg transition-all hover:scale-110"
-              style={{ background: "rgba(255,255,255,0.92)", boxShadow: "0 2px 8px rgba(0,0,0,0.10)", color: "var(--clr-amber)" }}
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-            </AuthDownloadLink>
+            {(groupDownloadSrc || groupSrc) && (
+              <AuthDownloadLink
+                url={(groupDownloadSrc || groupSrc)!}
+                filename={groupDownloadName || groupName}
+                className="absolute bottom-3 right-3 inline-flex items-center justify-center w-9 h-9 rounded-lg transition-all hover:scale-110"
+                style={{ background: "rgba(255,255,255,0.92)", boxShadow: "0 2px 8px rgba(0,0,0,0.10)", color: "var(--clr-amber)" }}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              </AuthDownloadLink>
+            )}
           </div>
         </div>
       )}
@@ -1218,8 +1209,9 @@ function MarkersResult({ task, data, taskCache, clusterLevels: parentClusterLeve
   const TABS = ["全局差异表", "大盘基因图", "单簇特征分布图", "双簇对比表"];
   const [activeTab, setActiveTab] = useState(0);
 
-  // Tab 3 State — 多选
+  // Tab 3 State — 多选（草稿勾选态与已生成展示态隔离）
   const [tab3Selected, setTab3Selected] = useState<string[]>([]);
+  const [tab3AppliedClusters, setTab3AppliedClusters] = useState<string[]>([]);
   const [tab3TaskId, setTab3TaskId] = useState<string | null>(null);
   const [tab3Task, setTab3Task] = useState<Task | null>(null);
   const [tab3Data, setTab3Data] = useState<Record<string, unknown> | null>(null);
@@ -1236,21 +1228,27 @@ function MarkersResult({ task, data, taskCache, clusterLevels: parentClusterLeve
   // 当用户切换到 Tab 3 时，自动加载基因列表（仅首次）
   useEffect(() => {
     if (activeTab === 2 && !genesFetched && task?.project_id) {
+      const controller = new AbortController();
       setGenesLoading(true);
-      fetchWithAuth(`/api/projects/${task.project_id}/genes`)
+      authedFetch(`/api/projects/${task.project_id}/genes`, { signal: controller.signal })
         .then((r) => (r.ok ? r.json() : Promise.reject(r.statusText)))
         .then((data) => {
+          if (controller.signal.aborted) return;
           setAllGenes(data.genes || []);
           setGenesFetched(true);
         })
         .catch(() => { /* 静默失败，用户仍可使用 top N 功能 */ })
-        .finally(() => setGenesLoading(false));
+        .finally(() => {
+          if (!controller.signal.aborted) setGenesLoading(false);
+        });
+      return () => controller.abort();
     }
   }, [activeTab, genesFetched, task?.project_id]);
 
-  // Tab 4 State — 多选
+  // Tab 4 State — 多选（草稿勾选态与已生成展示态隔离）
   const [tab4G1, setTab4G1] = useState<string[]>([]);
   const [tab4G2, setTab4G2] = useState<string[]>([]);
+  const [tab4AppliedPair, setTab4AppliedPair] = useState<{ g1: string[]; g2: string[] } | null>(null);
   const [tab4TaskId, setTab4TaskId] = useState<string | null>(null);
   const [tab4Task, setTab4Task] = useState<Task | null>(null);
   const [tab4Data, setTab4Data] = useState<GeneRow[] | null>(null);
@@ -1291,7 +1289,10 @@ function MarkersResult({ task, data, taskCache, clusterLevels: parentClusterLeve
               setTab3Task(pm);
               setTab3TaskId(pm.id);
               const cl = paramToList(pm.params?.cluster);
-              if (cl.length) setTab3Selected(cl);
+              if (cl.length) {
+                setTab3Selected(cl);
+                setTab3AppliedClusters(cl);
+              }
             }
           } catch { /* best-effort: 跳过单簇图恢复 */ }
         }
@@ -1310,6 +1311,7 @@ function MarkersResult({ task, data, taskCache, clusterLevels: parentClusterLeve
               const c2 = paramToList(mp.params?.cluster_2);
               if (c1.length) setTab4G1(c1);
               if (c2.length) setTab4G2(c2);
+              if (c1.length && c2.length) setTab4AppliedPair({ g1: c1, g2: c2 });
             }
           } catch { /* best-effort: 跳过双簇表恢复 */ }
         }
@@ -1342,7 +1344,7 @@ function MarkersResult({ task, data, taskCache, clusterLevels: parentClusterLeve
     setLoader(true);
     setError(null);
     try {
-      const res = await fetchWithAuth("/api/tasks", {
+      const res = await authedFetch("/api/tasks", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ project_id: task.project_id, step, params })
@@ -1351,7 +1353,7 @@ function MarkersResult({ task, data, taskCache, clusterLevels: parentClusterLeve
       const t = await res.json();
 
       const pollTask = async (id: string): Promise<Task> => {
-        const r = await fetchWithAuth(`/api/tasks/${id}`);
+        const r = await authedFetch(`/api/tasks/${id}`);
         const fresh = await r.json();
         if (fresh.status === "failed") throw new Error(fresh.error_msg || "任务失败");
         if (fresh.status === "completed") return fresh;
@@ -1361,7 +1363,7 @@ function MarkersResult({ task, data, taskCache, clusterLevels: parentClusterLeve
 
       const completedTask = await pollTask(t.id);
 
-      const rRes = await fetchWithAuth(`/api/tasks/${t.id}/result`);
+      const rRes = await authedFetch(`/api/tasks/${t.id}/result`);
       const finalResult = await rRes.json();
       onSuccess(t.id, finalResult, completedTask);
     } catch(err: any) {
@@ -1544,12 +1546,14 @@ function MarkersResult({ task, data, taskCache, clusterLevels: parentClusterLeve
                {/* 按钮 */}
                <button 
                  onClick={() => {
-                   const clusterStr = tab3Selected.join(',');
+                   const submittedClusters = [...tab3Selected];
+                   const clusterStr = submittedClusters.join(',');
                    const customStr = customGenes.join(',');
                    runSubTask("plot_markers", { ...task.params, cluster: clusterStr, custom_genes: customStr, group_by: !groupPrefix ? "CellType" : (task.params?.group_by ?? "Cluster") }, setTab3Loading, setTab3Error, (tid: string, res: any, completedTask: Task) => {
                      setTab3TaskId(tid);
                      setTab3Task(completedTask);
                      setTab3Data(res);
+                     setTab3AppliedClusters(submittedClusters);
                    });
                  }}
                  disabled={tab3Loading || tab3Selected.length === 0}
@@ -1562,7 +1566,7 @@ function MarkersResult({ task, data, taskCache, clusterLevels: parentClusterLeve
              
              {tab3Error && <div className="callout callout-danger text-xs">{tab3Error}</div>}
              
-             {tab3TaskId && tab3Task && !tab3Loading && !tab3Error && (
+             {tab3TaskId && tab3Task && tab3AppliedClusters.length > 0 && !tab3Loading && !tab3Error && (
                <div className="mt-4 w-full animate-fade-in">
                  <div className="flex gap-2 mb-4">
                    {([['feature', 'FeaturePlot 特征图 (UMAP)'], ['vln', 'VlnPlot 小提琴图 (Expression)']] as const).map(([mode, label]) => (
@@ -1577,8 +1581,8 @@ function MarkersResult({ task, data, taskCache, clusterLevels: parentClusterLeve
                      >{label}</button>
                    ))}
                  </div>
-                 {/* 为每个选中的 cluster 渲染图片 */}
-                 {tab3Selected.map(cl => {
+                 {/* 为每个已生成图片的 cluster 渲染图片（不受草稿勾选变更影响） */}
+                 {tab3AppliedClusters.map(cl => {
                    // 这里的 featureName 和 vlnName 是用于请求图片 src 的 canonical 名称
                    const fmt = (task.params?.plot_format as string) || "png";
                    const featureName = `plot_markers_feature_${cl}.${fmt}`;
@@ -1673,11 +1677,13 @@ function MarkersResult({ task, data, taskCache, clusterLevels: parentClusterLeve
 
                <button 
                  onClick={() => {
-                   const g1Str = tab4G1.join(',');
-                   const g2Str = tab4G2.join(',');
+                   const submittedPair = { g1: [...tab4G1], g2: [...tab4G2] };
+                   const g1Str = submittedPair.g1.join(',');
+                   const g2Str = submittedPair.g2.join(',');
                    runSubTask("markers_pairwise", { ...task.params, cluster_1: g1Str, cluster_2: g2Str, group_by: !groupPrefix ? "CellType" : (task.params?.group_by ?? "Cluster") }, setTab4Loading, setTab4Error, (tid: string, res: any, completedTask: Task) => {
                        setTab4TaskId(tid);
                        setTab4Task(completedTask);
+                       setTab4AppliedPair(submittedPair);
                        setTab4Data((res.top_genes ?? []) as GeneRow[]);
                        // 火山图数据
                        const vd = res.volcano_data;
@@ -1699,6 +1705,8 @@ function MarkersResult({ task, data, taskCache, clusterLevels: parentClusterLeve
              {tab4Error && <div className="callout callout-danger text-xs">{tab4Error}</div>}
              
              {tab4TaskId && !tab4Loading && !tab4Error && tab4Data && (() => {
+                const appliedG1 = tab4AppliedPair?.g1 ?? tab4G1;
+                const appliedG2 = tab4AppliedPair?.g2 ?? tab4G2;
                 const tab4Cols = tab4Data.length > 0
                   ? (() => {
                       const allKeys = Array.from(new Set(tab4Data.flatMap(row => Object.keys(row))));
@@ -1711,14 +1719,14 @@ function MarkersResult({ task, data, taskCache, clusterLevels: parentClusterLeve
                 return (
                 <div className="animate-fade-in">
                   <div className="flex gap-4 text-xs mb-3" style={{ color: "var(--clr-text-faint)" }}>
-                    <span>分析对：<strong style={{ color: "var(--clr-text)" }}>{tab4G1.join('+')} vs {tab4G2.join('+')}</strong></span>
+                    <span>分析对：<strong style={{ color: "var(--clr-text)" }}>{appliedG1.join('+')} vs {appliedG2.join('+')}</strong></span>
                   </div>
                   {/* 火山图 */}
                   {tab4Volcano && tab4Volcano.length > 0 && (
                     <div className="mb-4">
                       <VolcanoPlot
                         data={tab4Volcano}
-                        title={`${tab4G1.join('+')} vs ${tab4G2.join('+')}`}
+                        title={`${appliedG1.join('+')} vs ${appliedG2.join('+')}`}
                         height={550}
                         plotFormat={(task.params?.plot_format as string) || "png"}
                         projectName={projectName}
@@ -1759,8 +1767,8 @@ function MarkersResult({ task, data, taskCache, clusterLevels: parentClusterLeve
                   {(() => {
                     const fmt4 = (task.params?.plot_format as string) || "png";
                     const ts = tab4Task?.completed_at ? tab4Task.completed_at.replace(/[-:T]/g, '').slice(0, 14) : "";
-                    const g1Label = tab4G1.join('_');
-                    const g2Label = tab4G2.join('_');
+                    const g1Label = appliedG1.join('_');
+                    const g2Label = appliedG2.join('_');
                     // 使用 task result_path 中的实际文件名（而非硬编码名）
                     const actualCsvName = tab4Task?.result_path
                       ? tab4Task.result_path.split('/').pop()!
@@ -2090,11 +2098,19 @@ function WGCNAResult({ data, taskId }: { data: Record<string, unknown> | null; t
   const rawDataPaths = data.data_paths as Record<string, unknown> | undefined;
   const stats = data.stats as { cell_type?: string; soft_power?: number; n_modules?: number; n_hub_genes?: number } | undefined;
 
-  const plotPaths = rawPlotPaths
-    ? Object.fromEntries(Object.entries(rawPlotPaths).map(([k, v]) => [k, Array.isArray(v) ? String(v[0]) : String(v ?? '')]).filter(([, v]) => !!v))
+  const plotPaths: Record<string, string> | undefined = rawPlotPaths
+    ? Object.fromEntries(
+        Object.entries(rawPlotPaths)
+          .map(([k, v]) => [k, Array.isArray(v) ? String(v[0]) : String(v ?? '')] as [string, string])
+          .filter(([, v]) => Boolean(v))
+      )
     : undefined;
-  const dataPaths = rawDataPaths
-    ? Object.fromEntries(Object.entries(rawDataPaths).map(([k, v]) => [k, Array.isArray(v) ? String(v[0]) : String(v ?? '')]).filter(([, v]) => !!v))
+  const dataPaths: Record<string, string> | undefined = rawDataPaths
+    ? Object.fromEntries(
+        Object.entries(rawDataPaths)
+          .map(([k, v]) => [k, Array.isArray(v) ? String(v[0]) : String(v ?? '')] as [string, string])
+          .filter(([, v]) => Boolean(v))
+      )
     : undefined;
 
   const getFileName = (path: string) => path.split('/').pop() || path;
@@ -2271,11 +2287,19 @@ function GenericStepResult({ data, stepId, taskId, task }: { data: Record<string
   const rawPlotPaths = data.plot_paths as Record<string, unknown> | undefined;
   const rawDataPaths = data.data_paths as Record<string, unknown> | undefined;
   // 解包每个值（R jsonlite 可能将字符串包装为单元素数组）
-  const plotPaths = rawPlotPaths
-    ? Object.fromEntries(Object.entries(rawPlotPaths).map(([k, v]) => [k, unwrapStr(v)]).filter(([, v]) => !!v))
+  const plotPaths: Record<string, string> | undefined = rawPlotPaths
+    ? Object.fromEntries(
+        Object.entries(rawPlotPaths)
+          .map(([k, v]) => [k, unwrapStr(v)] as [string, string | undefined])
+          .filter((entry): entry is [string, string] => Boolean(entry[1]))
+      )
     : undefined;
-  const dataPaths = rawDataPaths
-    ? Object.fromEntries(Object.entries(rawDataPaths).map(([k, v]) => [k, unwrapStr(v)]).filter(([, v]) => !!v))
+  const dataPaths: Record<string, string> | undefined = rawDataPaths
+    ? Object.fromEntries(
+        Object.entries(rawDataPaths)
+          .map(([k, v]) => [k, unwrapStr(v)] as [string, string | undefined])
+          .filter((entry): entry is [string, string] => Boolean(entry[1]))
+      )
     : undefined;
   const outdir = unwrapStr(data.outdir);
 
@@ -2314,7 +2338,7 @@ function GenericStepResult({ data, stepId, taskId, task }: { data: Record<string
     if (!pwSel || !task) return;
     setPwLoading(true); setPwError(null);
     try {
-      const res = await fetchWithAuth("/api/tasks", {
+      const res = await authedFetch("/api/tasks", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -2332,7 +2356,7 @@ function GenericStepResult({ data, stepId, taskId, task }: { data: Record<string
         throw new Error(msg);
       }
       const poll = async (id: string): Promise<Record<string, unknown>> => {
-        const r = await fetchWithAuth(`/api/tasks/${id}`);
+        const r = await authedFetch(`/api/tasks/${id}`);
         const fresh = await r.json();
         if (fresh.status === "failed") throw new Error(fresh.error_msg || "任务失败");
         if (fresh.status === "completed") return fresh;
@@ -2340,7 +2364,7 @@ function GenericStepResult({ data, stepId, taskId, task }: { data: Record<string
         return poll(id);
       };
       await poll(t.id);
-      const rRes = await fetchWithAuth(`/api/tasks/${t.id}/result`);
+      const rRes = await authedFetch(`/api/tasks/${t.id}/result`);
       const final = await rRes.json();
       const rawpp = final.plot_paths as Record<string, unknown> | undefined;
       const pp = rawpp

@@ -9,6 +9,7 @@ import { IconFolder, IconChart, IconDNA } from "./Icons";
 import {
   createProject,
   deleteProject,
+  getCurrentUser,
   isGuest,
   getUserRole,
   listProjects,
@@ -18,11 +19,13 @@ import {
 
 interface ProjectSelectorProps {
   selectedId: number | null;
+  hasSelectedProject?: boolean;
   onSelect: (project: Project | null) => void;
 }
 
 export default function ProjectSelector({
   selectedId,
+  hasSelectedProject,
   onSelect,
 }: ProjectSelectorProps) {
   const [projects, setProjects] = useState<Project[]>([]);
@@ -36,6 +39,10 @@ export default function ProjectSelector({
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [guest, setGuest] = useState(false);
+  const [maxProjects, setMaxProjects] = useState<number>(() => {
+    const role = getUserRole();
+    return isGuest() || role === "user" ? 1 : 99;
+  });
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [showSpeciesDropdown, setShowSpeciesDropdown] = useState(false);
 
@@ -52,21 +59,31 @@ export default function ProjectSelector({
     }
   }, []);
 
-  useEffect(() => { fetchProjects(); setGuest(isGuest()); }, [fetchProjects]);
-
-  /** 项目列表加载完成后，若 selectedId 与任何项目都不匹配，主动清除过期选择 */
   useEffect(() => {
-    if (!loading && selectedId !== null && projects.length >= 0) {
+    fetchProjects();
+    setGuest(isGuest());
+    getCurrentUser()
+      .then((u) => {
+        setMaxProjects(u.max_projects);
+        setGuest(Boolean(u.is_guest));
+      })
+      .catch(() => {});
+  }, [fetchProjects]);
+
+  /** 项目列表加载完成后，自动校验或同步 URL ?project=<id> 选中的项目 */
+  useEffect(() => {
+    if (!loading && selectedId !== null) {
       const match = projects.find((p) => p.id === selectedId);
       if (!match) {
         onSelect(null);
+      } else if (hasSelectedProject === false) {
+        onSelect(match);
       }
     }
-  }, [loading, selectedId, projects, onSelect]);
+  }, [loading, selectedId, hasSelectedProject, projects, onSelect]);
 
-  /** 游客是否已达到 1 个项目限制 */
-  const role = getUserRole();
-  const guestLimitReached = (guest || role === "user") && projects.length >= 1;
+  /** 是否已达到当前账号项目数量上限 */
+  const limitReached = projects.length >= maxProjects;
 
   useEffect(() => {
     const handleClick = (e: MouseEvent) => {
@@ -150,7 +167,7 @@ export default function ProjectSelector({
           {/* 标题栏 */}
           <div className="flex items-center justify-between px-4 py-3" style={{ borderBottom: "1px solid var(--clr-border)", background: "var(--clr-bg-alt)" }}>
             <h3 className="text-sm font-semibold" style={{ fontFamily: "var(--font-serif)", color: "var(--clr-dark)" }}>项目管理</h3>
-            {!guestLimitReached && (
+            {!limitReached && (
               <button
                 onClick={() => { setShowNew(!showNew); setError(null); }}
                 className="text-xs px-3 py-1 rounded transition-colors"
@@ -160,9 +177,11 @@ export default function ProjectSelector({
               </button>
             )}
           </div>
-          {guestLimitReached && (
+          {limitReached && (
             <div className="px-4 py-2 text-xs" style={{ background: "var(--clr-gold-soft)", color: "var(--clr-amber-dark)", borderBottom: "1px solid var(--clr-border)" }}>
-              最多 1 个项目。注册账号以创建更多。
+              {guest
+                ? "游客最多创建 1 个项目，注册正式账号以获得更长保留期与更多配额。"
+                : `已达到当前账户项目数量上限（${maxProjects} 个）。`}
             </div>
           )}
 
