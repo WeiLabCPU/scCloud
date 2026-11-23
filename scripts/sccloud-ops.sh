@@ -21,6 +21,18 @@ fi
 
 SUDO=""
 IS_ROOTLESS=0
+IS_PODMAN=0
+if docker --version 2>/dev/null | grep -qi 'podman'; then
+  IS_PODMAN=1
+  if [ "$(id -u)" != "0" ] && [ -z "${XDG_RUNTIME_DIR:-}" ]; then
+    _uid=$(id -u)
+    if [ -d "/run/user/${_uid}" ]; then
+      XDG_RUNTIME_DIR="/run/user/${_uid}"
+      export XDG_RUNTIME_DIR
+    fi
+  fi
+fi
+
 if [ "$(id -u)" != "0" ] && ! docker info >/dev/null 2>&1; then
   uid=$(id -u)
   rootless_sock="${XDG_RUNTIME_DIR:-/run/user/${uid}}/docker.sock"
@@ -43,7 +55,11 @@ run_docker() {
   fi
 }
 
-if run_docker info --format '{{.SecurityOptions}}' 2>/dev/null | grep -qi 'rootless'; then
+if [ "$IS_PODMAN" = "1" ]; then
+  if [ "$(run_docker info --format '{{.Host.Security.Rootless}}' 2>/dev/null || true)" = "true" ]; then
+    IS_ROOTLESS=1
+  fi
+elif run_docker info --format '{{.SecurityOptions}}' 2>/dev/null | grep -qi 'rootless'; then
   IS_ROOTLESS=1
 fi
 

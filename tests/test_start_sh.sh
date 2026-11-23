@@ -76,13 +76,26 @@ setup_sandbox() {
 set -u
 [ -n "${MOCK_DOCKER_LOG:-}" ] && printf '%s\n' "$*" >> "$MOCK_DOCKER_LOG"
 
+if [ "${1:-}" = "--version" ]; then
+  if [ "${MOCK_IS_PODMAN:-0}" = "1" ]; then
+    echo "podman version 5.1.1"
+  else
+    echo "Docker version 27.2.0, build 3ab4256"
+  fi
+  exit 0
+fi
+
 if [ "${1:-}" = "compose" ] && [ "${2:-}" = "version" ]; then
   echo "Docker Compose version v2.29.0"
   exit 0
 fi
 
 if [ "${1:-}" = "version" ]; then
-  echo "27.2.0"
+  if [ "${MOCK_IS_PODMAN:-0}" = "1" ]; then
+    echo "5.1.1"
+  else
+    echo "27.2.0"
+  fi
   exit 0
 fi
 
@@ -105,6 +118,28 @@ if [ "${1:-}" = "info" ]; then
       shift
     fi
   done
+  if [ "${MOCK_IS_PODMAN:-0}" = "1" ]; then
+    case "$fmt" in
+      *"Host.Security.Rootless"*)
+        if [ "${MOCK_PODMAN_ROOTLESS:-0}" = "1" ]; then
+          echo "true"
+        else
+          echo "false"
+        fi
+        ;;
+      *"Store.GraphRoot"*)
+        echo "${MOCK_PODMAN_GRAPH_ROOT:-/var/lib/containers/storage}"
+        ;;
+      *"SecurityOptions"*|*"DockerRootDir"*|*"HTTPProxy"*|*"Mirrors"*)
+        echo "Error: template: field not supported in Podman" >&2
+        exit 1
+        ;;
+      *)
+        echo "podman info"
+        ;;
+    esac
+    exit 0
+  fi
   case "$fmt" in
     *"SecurityOptions"*)
       if [ "${MOCK_DOCKER_ROOTLESS:-0}" = "1" ]; then
@@ -126,6 +161,13 @@ if [ "${1:-}" = "info" ]; then
       echo "Server Version: 27.2.0"
       ;;
   esac
+  exit 0
+fi
+
+if [ "${1:-}" = "inspect" ]; then
+  if [ -n "${MOCK_HEALTH_LOG_OUTPUT:-}" ]; then
+    echo "[exit=1] ${MOCK_HEALTH_LOG_OUTPUT}"
+  fi
   exit 0
 fi
 
@@ -229,11 +271,16 @@ if [ "${1:-}" = "compose" ]; then
       exit "${MOCK_UP_RC:-0}"
       ;;
     ps)
-      case "$*" in
-        *"Health"*) echo "healthy" ;;
-        *"Status"*) echo "Up 5 seconds (healthy)" ;;
-        *) echo "sccloud-web-1 Up 5 seconds (healthy)" ;;
+      case " $* " in
+        *" -q "*) echo "mock-cid-1" ;;
+        *"Health"*) echo "${MOCK_PS_HEALTH:-healthy}" ;;
+        *"Status"*) echo "${MOCK_PS_STATUS:-Up 5 seconds (healthy)}" ;;
+        *) echo "sccloud-web-1 ${MOCK_PS_STATUS:-Up 5 seconds (healthy)}" ;;
       esac
+      exit 0
+      ;;
+    logs)
+      echo "${MOCK_SVC_LOGS:-mock container log line}"
       exit 0
       ;;
     exec)
@@ -908,6 +955,100 @@ fi
 assert_contains "U23" "$out1" "迁移完成" || ok_u23=0
 assert_contains "U23" "$out2" "已存在项目数据，跳过覆盖" || ok_u23=0
 [ "$ok_u23" = "1" ] && pass "U23: sccloud-ops.sh migrate-projects-dir 迁移到自定义目录、保留根属主并幂等防覆盖"
+
+# ---------------- U24: podman-docker Rootless 检测、代理继承与 compose rootless 叠加 ----------------
+sb=$(setup_sandbox u24)
+dlog="$sb/docker.log"
+podman_store="$sb/podman-store"
+mkdir -p "$podman_store"
+out_doc=$(
+  cd "$sb" && \
+  env PATH="$sb/fake-bin:$PATH" HOME="$sb/home" \
+    HTTPS_PROXY="http://127.0.0.1:7890" \
+    MOCK_IS_PODMAN=1 MOCK_PODMAN_ROOTLESS=1 MOCK_PODMAN_GRAPH_ROOT="$podman_store" \
+    MOCK_ALL_LOCAL_IMAGES=1 \
+    sh ./start.sh --doctor 2>&1
+)
+rc_doc=$?
+ok_u24=1
+[ "$rc_doc" -eq 0 ] || { fail "U24" "--doctor failed under podman mock rc=$rc_doc"; ok_u24=0; }
+assert_contains "U24" "$out_doc" "Docker(Podman 兼容) 就绪" || ok_u24=0
+assert_contains "U24" "$out_doc" "模式=rootless" || ok_u24=0
+assert_contains "U24" "$out_doc" "RootDir=${podman_store}" || ok_u24=0
+assert_contains "U24" "$out_doc" "Podman 直接继承当前终端代理" || ok_u24=0
+assert_not_contains "U24" "$out_doc" "Docker daemon 未配置代理" || ok_u24=0
+
+out_up=$(
+  cd "$sb" && \
+  env PATH="$sb/fake-bin:$PATH" HOME="$sb/home" \
+    HTTPS_PROXY="http://127.0.0.1:7890" \
+    MOCK_DOCKER_LOG="$dlog" \
+    MOCK_IS_PODMAN=1 MOCK_PODMAN_ROOTLESS=1 MOCK_PODMAN_GRAPH_ROOT="$podman_store" \
+    MOCK_ALL_LOCAL_IMAGES=1 \
+    sh ./start.sh --no-pull 2>&1
+)
+rc_up=$?
+[ "$rc_up" -eq 0 ] || { fail "U24" "start.sh --no-pull failed under podman mock rc=$rc_up"; ok_u24=0; }
+grep -q -- '-f docker-compose.yml -f docker-compose.rootless.yml up -d' "$dlog" || { fail "U24" "rootless overlay not applied under rootless podman"; ok_u24=0; }
+[ "$ok_u24" = "1" ] && pass "U24: podman-docker 正确识别 rootless/GraphRoot、免报 dockerd 代理错位并叠加 rootless 配置"
+
+# ---------------- U25: Podman 状态仅显示 Up 时仍凭 Health=unhealthy 输出健康日志与容器日志 ----------------
+sb=$(setup_sandbox u25)
+out=$(
+  cd "$sb" && \
+  env PATH="$sb/fake-bin:$PATH" HOME="$sb/home" \
+    MOCK_IS_PODMAN=1 MOCK_ALL_LOCAL_IMAGES=1 \
+    MOCK_UP_RC=1 MOCK_PS_STATUS="Up 21 minutes" MOCK_PS_HEALTH="unhealthy" \
+    MOCK_HEALTH_LOG_OUTPUT="SyntaxError: invalid syntax" \
+    MOCK_SVC_LOGS="uvicorn running on 8000" \
+    sh ./start.sh --no-pull 2>&1
+)
+rc=$?
+ok_u25=1
+[ "$rc" -ne 0 ] || { fail "U25" "expected non-zero exit when compose up fails"; ok_u25=0; }
+assert_contains "U25" "$out" "health=unhealthy" || ok_u25=0
+assert_contains "U25" "$out" "[healthcheck]" || ok_u25=0
+assert_contains "U25" "$out" "SyntaxError: invalid syntax" || ok_u25=0
+assert_contains "U25" "$out" "uvicorn running on 8000" || ok_u25=0
+[ "$ok_u25" = "1" ] && pass "U25: diagnose_failure 在 Podman Status 不含 unhealthy 时仍输出探活与服务日志"
+
+# ---------------- U26: docker-compose*.yml 中 CMD 健康检查数组元素不得含空白（防 Podman 切分） ----------------
+ok_u26=1
+if command -v python3 >/dev/null 2>&1; then
+  hc_check=$(python3 - "$REPO_ROOT" <<'PY'
+import ast, glob, os, re, sys
+root = sys.argv[1]
+bad = []
+for path in sorted(glob.glob(os.path.join(root, "docker-compose*.yml"))):
+    with open(path, encoding="utf-8") as f:
+        for lineno, line in enumerate(f, 1):
+            m = re.match(r'^\s*test:\s*(\[.*\])\s*(?:#.*)?$', line)
+            if not m:
+                continue
+            try:
+                arr = ast.literal_eval(m.group(1))
+            except Exception as exc:
+                bad.append(f"{os.path.basename(path)}:{lineno}: parse error: {exc}")
+                continue
+            if isinstance(arr, list) and arr and arr[0] == "CMD":
+                for item in arr[1:]:
+                    if isinstance(item, str) and any(ch.isspace() for ch in item):
+                        bad.append(f"{os.path.basename(path)}:{lineno}: CMD arg contains whitespace: {item!r}")
+if bad:
+    print("\n".join(bad))
+    sys.exit(1)
+PY
+  ) || { fail "U26" "$hc_check"; ok_u26=0; }
+else
+  for cf in "$REPO_ROOT"/docker-compose*.yml; do
+    [ -f "$cf" ] || continue
+    if grep -nE '^[[:space:]]*test:[[:space:]]*\["CMD"' "$cf" | grep -qE '"[^"]*[[:space:]][^"]*"'; then
+      fail "U26" "CMD healthcheck item contains whitespace in $cf"
+      ok_u26=0
+    fi
+  done
+fi
+[ "$ok_u26" = "1" ] && pass "U26: docker-compose*.yml 中所有 CMD 健康检查参数均不含空白字符"
 
 echo ""
 printf 'Summary: %d passed, %d failed\n' "$PASS_COUNT" "$FAIL_COUNT"

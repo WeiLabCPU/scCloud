@@ -172,6 +172,11 @@ sh ./start.sh --build        # 本地构建（一般用户不需要；无需 r-e
 **打不开页面**  
 先看 `sh ./scripts/sccloud-ops.sh status` 是否都是 healthy / running，再访问 `/healthz`。日志：`sh ./scripts/sccloud-ops.sh logs`。
 
+**使用 Podman（`podman-docker`，如 RHEL / Rocky / AlmaLinux / CentOS 9）启动报 `sccloud-backend-1 is unhealthy`**  
+旧版 `docker-compose.yml` 中 `backend` 健康检查使用了带空格的 `python -c ...` 命令，而 Podman 的 Docker 兼容 API（`podman.socket`）会对 `CMD` 数组按空白二次切分导致探活报 `SyntaxError`；同时 Podman 默认会将宿主代理透传进容器。新版已改用无空格 `curl` 探活并为容器内网地址配置 `NO_PROXY`：  
+- 更新仓库后执行 `git pull && sh ./start.sh --no-pull` 即可自动重建 `backend` 并完成启动。  
+- 若在非 root 账号下使用 Rootless Podman，请确认已由管理员开启 `sudo loginctl enable-linger $(whoami)`，避免退出 SSH 后健康检查定时器停止。
+
 **拉取镜像失败 / 超时 / 提示缺少 `r-library`**  
 - 先跑 `sh ./start.sh --doctor` 检查 Docker 代理、网络连通性和 `.env` 镜像地址。  
 - 终端设置了 `https_proxy` 但拉镜像仍超时，说明代理没配进 Docker daemon（见上方「Rootless Docker 与代理配置」）。  

@@ -79,6 +79,7 @@ elapsed_str() { printf '%ds' $(($2 - $1)); }
 
 SUDO=""
 IS_ROOTLESS=0
+IS_PODMAN=0
 DOCKER_READY=0
 DOCKER_ROOT_DIR=""
 ROOTLESS_UNIT_STOPPED=0
@@ -193,6 +194,7 @@ docker_proxy_dropin_path() {
 }
 
 can_manage_docker_systemd() {
+  [ "$IS_PODMAN" = "1" ] && return 1
   command -v systemctl >/dev/null 2>&1 || return 1
   if [ "$IS_ROOTLESS" = "1" ]; then
     [ -n "${HOME:-}" ] || return 1
@@ -426,9 +428,22 @@ ensure_docker_installed() {
 detect_docker_access() {
   DOCKER_READY=0
   ROOTLESS_UNIT_STOPPED=0
+  IS_PODMAN=0
+  IS_ROOTLESS=0
 
   if ! ensure_docker_installed; then
     return 1
+  fi
+
+  if run_docker --version 2>/dev/null | grep -qi 'podman'; then
+    IS_PODMAN=1
+    if [ "$(id -u)" != "0" ] && [ -z "${XDG_RUNTIME_DIR:-}" ]; then
+      _uid=$(id -u)
+      if [ -d "/run/user/${_uid}" ]; then
+        XDG_RUNTIME_DIR="/run/user/${_uid}"
+        export XDG_RUNTIME_DIR
+      fi
+    fi
   fi
 
   if run_docker info >/dev/null 2>&1; then
@@ -468,10 +483,23 @@ detect_docker_access() {
     die "无法连接 Docker daemon，已中止启动"
   fi
 
-  if run_docker info --format '{{.SecurityOptions}}' 2>/dev/null | grep -qi 'rootless'; then
-    IS_ROOTLESS=1
+  IS_ROOTLESS=0
+  if [ "$IS_PODMAN" = "1" ]; then
+    if [ "$(run_docker info --format '{{.Host.Security.Rootless}}' 2>/dev/null || true)" = "true" ]; then
+      IS_ROOTLESS=1
+    fi
+    DOCKER_ROOT_DIR=$(run_docker info --format '{{.Store.GraphRoot}}' 2>/dev/null || true)
+    if [ "$IS_ROOTLESS" = "1" ] && command -v loginctl >/dev/null 2>&1; then
+      if loginctl show-user "$(whoami)" -p Linger 2>/dev/null | grep -q 'Linger=no'; then
+        warn "检测到 Rootless Podman 且未开启 systemd linger：退出 SSH 后健康检查定时器可能停止，建议管理员执行 sudo loginctl enable-linger $(whoami)"
+      fi
+    fi
+  else
+    if run_docker info --format '{{.SecurityOptions}}' 2>/dev/null | grep -qi 'rootless'; then
+      IS_ROOTLESS=1
+    fi
+    DOCKER_ROOT_DIR=$(run_docker info --format '{{.DockerRootDir}}' 2>/dev/null || true)
   fi
-  DOCKER_ROOT_DIR=$(run_docker info --format '{{.DockerRootDir}}' 2>/dev/null || true)
   return 0
 }
 
@@ -727,6 +755,14 @@ check_rootless_mounts() {
 check_docker_proxy() {
   [ "$DOCKER_READY" = "1" ] || return 0
   shell_proxy="${HTTPS_PROXY:-${https_proxy:-${HTTP_PROXY:-${http_proxy:-}}}}"
+  if [ "$IS_PODMAN" = "1" ]; then
+    PROXY_MISMATCH=0
+    SHELL_PROXY_DISPLAY="$shell_proxy"
+    if [ "$DO_DOCTOR" = "1" ]; then
+      info "代理状态：Shell=${shell_proxy:-未设置} | Podman 直接继承当前终端代理（容器内已配置 NO_PROXY 绕过本地与内网探活）"
+    fi
+    return 0
+  fi
   daemon_proxies=$(run_docker info --format '{{.HTTPProxy}}|{{.HTTPSProxy}}' 2>/dev/null || true)
   daemon_http=${daemon_proxies%%|*}
   daemon_https=${daemon_proxies#*|}
@@ -1011,14 +1047,39 @@ diagnose_failure() {
   run_compose ps 2>/dev/null || true
   echo ""
   info "[2/3] 异常服务日志（各 ~40 行）："
+  printed_any=0
   for svc in db redis backend r-engine r-engine-worker frontend web; do
     st=$(svc_status "$svc") || st=""
-    if echo "$st" | grep -qiE 'exited|failed|unhealthy|restarting'; then
-      echo "    --- $svc ($st) ---"
+    hl=$(svc_health "$svc") || hl=""
+    if echo "$st" | grep -qiE 'exited|failed|unhealthy|restarting' \
+      || echo "$hl" | grep -qiE 'unhealthy|starting'; then
+      printed_any=1
+      st_label="${st:-unknown}"
+      [ -n "$hl" ] && st_label="${st_label}, health=${hl}"
+      echo "    --- $svc ($st_label) ---"
+      if echo "$hl" | grep -qiE 'unhealthy|starting'; then
+        cid=$(run_compose ps -q "$svc" 2>/dev/null | head -1) || cid=""
+        if [ -n "$cid" ]; then
+          hlog=$(run_docker inspect --format '{{range .State.Health.Log}}[exit={{.ExitCode}}] {{.Output}} {{end}}' "$cid" 2>/dev/null | tr '\r\n' '  ' | cut -c1-1000) || hlog=""
+          [ -n "$hlog" ] && echo "    [healthcheck] $hlog"
+        fi
+      fi
       run_compose logs --tail 40 "$svc" 2>/dev/null | sed 's/^/    /'
       echo ""
     fi
   done
+  if [ "$printed_any" = "0" ]; then
+    for svc in backend web; do
+      cid=$(run_compose ps -q "$svc" 2>/dev/null | head -1) || cid=""
+      if [ -n "$cid" ]; then
+        st=$(svc_status "$svc") || st=""
+        hl=$(svc_health "$svc") || hl=""
+        echo "    --- $svc (${st:-unknown}${hl:+, health=$hl}) ---"
+        run_compose logs --tail 30 "$svc" 2>/dev/null | sed 's/^/    /'
+        echo ""
+      fi
+    done
+  fi
   info "[3/3] 磁盘："
   df -h . 2>/dev/null | sed 's/^/    /' || true
   if [ -n "$DOCKER_ROOT_DIR" ] && [ -d "$DOCKER_ROOT_DIR" ]; then
@@ -1113,7 +1174,11 @@ run_doctor() {
     compose_ver=$(run_docker compose version --short 2>/dev/null || run_docker compose version 2>/dev/null || echo "unknown")
     mode_label="rootful"
     [ "$IS_ROOTLESS" = "1" ] && mode_label="rootless"
-    ok "Docker 就绪：Server ${docker_ver} | Compose ${compose_ver} | 模式=${mode_label} | RootDir=${DOCKER_ROOT_DIR:-unknown}"
+    if [ "$IS_PODMAN" = "1" ]; then
+      ok "Docker(Podman 兼容) 就绪：Server ${docker_ver} | Compose ${compose_ver} | 模式=${mode_label} | RootDir=${DOCKER_ROOT_DIR:-unknown}"
+    else
+      ok "Docker 就绪：Server ${docker_ver} | Compose ${compose_ver} | 模式=${mode_label} | RootDir=${DOCKER_ROOT_DIR:-unknown}"
+    fi
   fi
 
   if [ -f .env ]; then
@@ -1393,9 +1458,9 @@ while [ "$i" -lt 45 ]; do
   h=$(svc_health web) || h=""
   http_ok=0
   if command -v curl >/dev/null 2>&1; then
-    curl -fsS --max-time 3 "$HEALTH_URL" >/dev/null 2>&1 && http_ok=1
+    curl --noproxy '*' -fsS --max-time 3 "$HEALTH_URL" >/dev/null 2>&1 && http_ok=1
   elif command -v wget >/dev/null 2>&1; then
-    wget -qO- --timeout=3 "$HEALTH_URL" >/dev/null 2>&1 && http_ok=1
+    env -u http_proxy -u HTTP_PROXY -u https_proxy -u HTTPS_PROXY wget -qO- --timeout=3 "$HEALTH_URL" >/dev/null 2>&1 && http_ok=1
   else
     [ "$h" = "healthy" ] && http_ok=1
   fi
