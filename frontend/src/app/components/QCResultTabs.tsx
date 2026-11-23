@@ -697,7 +697,7 @@ function CorrScatterPanel({ xData, yData, samples, xLabel, yLabel, corr }: CorrS
             boxShadow: "0 2px 8px rgba(0,0,0,0.06)",
           }}
         >
-          <p className="text-[10px] font-semibold mb-1 uppercase tracking-wider" style={{ color: "var(--clr-text-faint)" }}>
+          <p className="text-[11px] font-semibold mb-1 uppercase tracking-wider" style={{ color: "var(--clr-text-faint)" }}>
             Identity
           </p>
           {sampleList.map((s) => {

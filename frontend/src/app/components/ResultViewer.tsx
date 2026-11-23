@@ -20,9 +20,7 @@ import GeneAutocomplete from "./GeneAutocomplete";
 import AnnotateResult from "./AnnotateResult";
 import ImageLightbox from "./ImageLightbox";
 import {
-  ScatterPlot,
   DeckScatterPlot,
-  ViolinPlot,
   EnrichBubble,
   type ScatterData,
   type EnrichData,
@@ -199,11 +197,24 @@ function AuthImg({ src, alt, className, style }: {
  */
 function AuthDownloadLink({ url, filename, className, style, title, children }: { url: string, filename: string, className?: string, style?: React.CSSProperties, title?: string, children: React.ReactNode }) {
   const [downloading, setDownloading] = useState(false);
+  const [dlError, setDlError] = useState<string | null>(null);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
+  }, []);
 
   const handleDownload = async (e: React.MouseEvent) => {
     e.preventDefault();
     if (downloading) return;
     setDownloading(true);
+    setDlError(null);
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
     try {
       const res = await authedFetch(url);
       if (!res.ok) throw new Error("下载失败");
@@ -216,16 +227,31 @@ function AuthDownloadLink({ url, filename, className, style, title, children }: 
       a.click();
       a.remove();
       URL.revokeObjectURL(blobUrl);
-    } catch (err) {
-      alert("文件获取失败，可能是不存在或已经过期");
+    } catch {
+      setDlError("文件获取失败，可能是不存在或已经过期");
+      timerRef.current = setTimeout(() => setDlError(null), 4000);
     } finally {
       setDownloading(false);
     }
   };
 
   return (
-    <button onClick={handleDownload} disabled={downloading} className={className} style={style} title={title}>
-      {downloading ? <span className="opacity-70 flex items-center gap-1"><span className="w-3 h-3 border-2 border-t-transparent rounded-full animate-spin"></span> 下载中...</span> : children}
+    <button
+      onClick={handleDownload}
+      disabled={downloading}
+      className={className}
+      style={style}
+      title={dlError || title}
+    >
+      {downloading ? (
+        <span className="opacity-70 flex items-center gap-1">
+          <span className="w-3 h-3 border-2 border-t-transparent rounded-full animate-spin"></span> 下载中...
+        </span>
+      ) : dlError ? (
+        <span className="text-[11px] font-medium" style={{ color: "var(--clr-danger)" }}>失败</span>
+      ) : (
+        children
+      )}
     </button>
   );
 }
@@ -715,6 +741,7 @@ function ClusterResult({ data, task }: { data: Record<string, unknown> | null; t
   // ── Tab 状态 ──
   type TabId = "interactive" | "stats" | "sankey" | "group" | "metadata" | "subtype";
   const [activeTab, setActiveTab] = useState<TabId>("interactive");
+  const [csvError, setCsvError] = useState<string | null>(null);
   const tabs: { id: TabId; label: string }[] = [
     { id: "interactive", label: "Cluster UMAP图" },
     { id: "stats",   label: "结果统计" },
@@ -821,10 +848,13 @@ function ClusterResult({ data, task }: { data: Record<string, unknown> | null; t
       {/* ── Tab 1: 结果统计 ── */}
       {activeTab === "stats" && (
         <div className="space-y-5">
-          <div className="flex gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             <button
+              type="button"
+              disabled={clusterNum.length === 0}
               onClick={() => {
-                if (clusterNum.length === 0) { alert("暂无聚类统计数据"); return; }
+                setCsvError(null);
+                if (clusterNum.length === 0) return;
                 try {
                 const cols = Object.keys(clusterNum[0]);
                 const hdr = cols.map(escapeCsvCell).join(",");
@@ -844,17 +874,20 @@ function ClusterResult({ data, task }: { data: Record<string, unknown> | null; t
                 a.click();
                 document.body.removeChild(a);
                 setTimeout(() => URL.revokeObjectURL(url), 1000);
-                } catch(e) { alert("下载失败: " + (e instanceof Error ? e.message : String(e))); }
+                } catch(e) { setCsvError("聚类统计导出失败: " + (e instanceof Error ? e.message : String(e))); }
               }}
-              className="inline-flex items-center gap-1 px-2.5 py-1 rounded text-[11px] font-medium transition-all hover:shadow-sm"
+              className="inline-flex items-center gap-1 px-2.5 py-1 rounded text-[11px] font-medium transition-all hover:shadow-sm disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed"
               style={{ border: "1px solid var(--clr-border)", color: "var(--clr-amber-dark)", background: "rgba(200,96,25,0.04)" }}
             >
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
               聚类统计 .csv
             </button>
             <button
+              type="button"
+              disabled={freqTable.length === 0}
               onClick={() => {
-                if (freqTable.length === 0) { alert("暂无频率表数据"); return; }
+                setCsvError(null);
+                if (freqTable.length === 0) return;
                 try {
                 const cols = Object.keys(freqTable[0]);
                 const hdr = cols.map(escapeCsvCell).join(",");
@@ -874,14 +907,17 @@ function ClusterResult({ data, task }: { data: Record<string, unknown> | null; t
                 a.click();
                 document.body.removeChild(a);
                 setTimeout(() => URL.revokeObjectURL(url), 1000);
-                } catch(e) { alert("下载失败: " + (e instanceof Error ? e.message : String(e))); }
+                } catch(e) { setCsvError("频率表导出失败: " + (e instanceof Error ? e.message : String(e))); }
               }}
-              className="inline-flex items-center gap-1 px-2.5 py-1 rounded text-[11px] font-medium transition-all hover:shadow-sm"
+              className="inline-flex items-center gap-1 px-2.5 py-1 rounded text-[11px] font-medium transition-all hover:shadow-sm disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed"
               style={{ border: "1px solid var(--clr-border)", color: "var(--clr-amber-dark)", background: "rgba(200,96,25,0.04)" }}
             >
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
               频率表 .csv
             </button>
+            {csvError && (
+              <span className="text-xs" style={{ color: "var(--clr-danger)" }}>{csvError}</span>
+            )}
           </div>
           {/* 样本聚类数目统计 */}
           <div>
@@ -2378,7 +2414,7 @@ function WGCNAResult({ data, taskId }: { data: Record<string, unknown> | null; t
               { label: 'Hub 基因数', value: s.n_hub_genes },
             ].map((item) => (
               <div key={item.label} className="px-3 py-2 rounded-lg border" style={{ borderColor: 'var(--clr-border)', background: 'var(--clr-bg-alt)' }}>
-                <div className="text-[10px] font-medium mb-0.5" style={{ color: 'var(--clr-text-faint)' }}>{item.label}</div>
+                <div className="text-[11px] font-medium mb-0.5" style={{ color: 'var(--clr-text-faint)' }}>{item.label}</div>
                 <div className="text-sm font-bold" style={{ color: 'var(--clr-amber-dark)' }}>{item.value}</div>
               </div>
             ))}
@@ -2434,7 +2470,7 @@ function WGCNAResult({ data, taskId }: { data: Record<string, unknown> | null; t
       {activeTab === 'plots' && plotEntries.length === 0 && (
         <div className="text-center py-8" style={{ color: 'var(--clr-text-faint)' }}>
           <p className="text-xs">暂无图表输出</p>
-          <p className="text-[10px] mt-1">请确认 WGCNA 分析是否成功完成</p>
+          <p className="text-[11px] mt-1">请确认 WGCNA 分析是否成功完成</p>
         </div>
       )}
 
@@ -2446,7 +2482,7 @@ function WGCNAResult({ data, taskId }: { data: Record<string, unknown> | null; t
               <div className="flex items-center gap-2 min-w-0">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ color: 'var(--clr-text-faint)', flexShrink: 0 }}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
                 <span className="text-xs truncate" style={{ color: 'var(--clr-text)' }}>{getFileName(name)}</span>
-                <span className="text-[10px] shrink-0" style={{ color: 'var(--clr-text-faint)' }}>{name.endsWith('.rds') ? 'RDS' : name.endsWith('.csv') ? 'CSV' : ''}</span>
+                <span className="text-[11px] shrink-0" style={{ color: 'var(--clr-text-faint)' }}>{name.endsWith('.rds') ? 'RDS' : name.endsWith('.csv') ? 'CSV' : ''}</span>
               </div>
               <AuthDownloadLink
                 url={getDownloadUrl(path)}
@@ -2606,7 +2642,7 @@ function GenericStepResult({ data, stepId, taskId, task }: { data: Record<string
             const v = unwrap(val);
             return (
               <div key={key} className="px-3 py-2 rounded border" style={{ borderColor: "var(--clr-border)", background: "var(--clr-bg-alt)" }}>
-                <div className="text-[10px] font-medium" style={{ color: "var(--clr-text-faint)" }}>{key.replace(/_/g, " ")}</div>
+                <div className="text-[11px] font-medium" style={{ color: "var(--clr-text-faint)" }}>{key.replace(/_/g, " ")}</div>
                 <div className="text-sm font-semibold" style={{ color: "var(--clr-text)" }}>{String(v)}</div>
               </div>
             );
@@ -2635,7 +2671,7 @@ function GenericStepResult({ data, stepId, taskId, task }: { data: Record<string
             >
               {pwLoading ? "生成中…" : "展示该通路"}
             </button>
-            <span className="text-[10px]" style={{ color: "var(--clr-text-faint)" }}>
+            <span className="text-[11px]" style={{ color: "var(--clr-text-faint)" }}>
               共 {pathways.length} 条通路
             </span>
           </div>
@@ -2733,7 +2769,7 @@ function GenericStepResult({ data, stepId, taskId, task }: { data: Record<string
               <div className="flex items-center gap-2">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--clr-text-muted)" strokeWidth="2" strokeLinecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
                 <span className="text-xs" style={{ color: "var(--clr-text)" }}>{name.replace(/_/g, " ")}</span>
-                <span className="text-[10px]" style={{ color: "var(--clr-text-faint)", fontFamily: "var(--font-mono)" }}>{getFileName(path)}</span>
+                <span className="text-[11px]" style={{ color: "var(--clr-text-faint)", fontFamily: "var(--font-mono)" }}>{getFileName(path)}</span>
               </div>
               <AuthDownloadLink
                 url={getDownloadUrl(path)}

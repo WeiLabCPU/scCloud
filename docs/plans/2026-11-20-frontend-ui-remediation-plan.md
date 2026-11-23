@@ -1,8 +1,8 @@
 # scCloud 前端 UI/UX 与核心交互分级整改计划
 
 - **日期**：2026-11-20
-- **状态**：分批实施中 — Batch 1（PR #104）已合入 `main` 并部署至本机 `:8091`；Batch 2（`feat/frontend-p2-viz-and-upload`）实施中
-- **基线**：`origin/main` @ `27f42ed`（PR #104 已合入）
+- **状态**：分批实施中 — Batch 1（PR #104）、Batch 2（PR #105）已合入 `main`；Batch 3（`chore/frontend-p3-responsive-and-types`）已实施待合入
+- **基线**：`origin/main` @ `45a66ec`（PR #104 / #105 / #106 已合入）
 - **审计与核查范围**：
   - `frontend/src/` 全量 45 个源文件（约 15,756 行）；
   - 关联后端接口（[backend/app/auth/router.py](../../backend/app/auth/router.py)、[backend/app/convert/router.py](../../backend/app/convert/router.py)）；

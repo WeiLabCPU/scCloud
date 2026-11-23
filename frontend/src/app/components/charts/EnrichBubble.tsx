@@ -83,9 +83,9 @@ export default function EnrichBubble({
         colorbar: {
           title: {
             text: "-log₁₀(p.adj)",
-            font: { size: 10, color: "#a8a29e" },
+            font: { size: 11, color: "#78716c" },
           },
-          tickfont: { size: 9, color: "#78716c" },
+          tickfont: { size: 11, color: "#78716c" },
           thickness: 12,
           len: 0.5,
         },
@@ -110,7 +110,7 @@ export default function EnrichBubble({
         <div className="text-center text-stone-600">
           <div className="text-3xl mb-2">🔗</div>
           <p className="text-xs">{title}</p>
-          <p className="text-[10px] mt-1">等待数据加载</p>
+          <p className="text-[11px] mt-1">等待数据加载</p>
         </div>
       </div>
     );
@@ -127,7 +127,7 @@ export default function EnrichBubble({
         },
         paper_bgcolor: "transparent",
         plot_bgcolor: "transparent",
-        font: { color: "#57534e", family: "Inter, sans-serif", size: 10 },
+        font: { color: "#57534e", family: "Inter, sans-serif", size: 11 },
         xaxis: {
           title: { text: "Gene Ratio" },
           gridcolor: "rgba(168, 162, 158, 0.25)",

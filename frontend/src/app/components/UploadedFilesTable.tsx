@@ -23,6 +23,7 @@ interface UploadedFilesTableProps {
   onGroupChange: (sampleName: string, group: string) => void;
   onDelete: (sampleName: string, filePath: string) => void;
   onAddSample: () => void;
+  addTriggerRef?: React.RefObject<HTMLSpanElement | null>;
 }
 
 const PRESET_GROUPS = ["Control", "Case"];
@@ -33,6 +34,7 @@ export default function UploadedFilesTable({
   onGroupChange,
   onDelete,
   onAddSample,
+  addTriggerRef,
 }: UploadedFilesTableProps) {
   const [customGroup, setCustomGroup] = useState<Record<string, boolean>>({});
 
@@ -155,7 +157,7 @@ export default function UploadedFilesTable({
             style={{ borderBottom: "1px solid var(--clr-border)" }}
           >
             <td colSpan={9} className="px-3 py-2 text-center">
-              <span className="inline-flex items-center gap-1.5 text-xs" style={{ color: "var(--clr-text-faint)" }}>
+              <span ref={addTriggerRef} className="inline-flex items-center gap-1.5 text-xs" style={{ color: "var(--clr-text-faint)" }}>
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>
                 添加样本
               </span>

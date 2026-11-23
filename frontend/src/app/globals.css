@@ -28,8 +28,9 @@
 
   /* Text — warm grays, never cold */
   --clr-text: #3B3836;
-  --clr-text-muted: #7C7067;
-  --clr-text-faint: #A8A099;
+  --clr-text-muted: #6B6058;
+  --clr-text-secondary: var(--clr-text-muted);
+  --clr-text-faint: #786E65;
   --clr-border: #E8E2DA;
 
   /* Semantic */
@@ -189,7 +190,11 @@ body {
   transition: all 0.2s ease;
 }
 
-.card:hover {
+.card-interactive {
+  cursor: pointer;
+}
+
+.card-interactive:hover {
   border-color: rgba(200, 96, 25, 0.25); /* Subtle amber glow */
   box-shadow: var(--shadow-md);
   transform: translateY(-1px);
@@ -218,7 +223,6 @@ body {
 .stat-card:hover {
   border-color: rgba(200, 96, 25, 0.15);
   box-shadow: var(--shadow-md);
-  transform: translateY(-1px);
 }
 
 .stat-card .stat-value {

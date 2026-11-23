@@ -664,7 +664,7 @@ export default function Phase2ParamPage({ pipeline, token, onComplete, species =
                         </>,
                         document.body
                       )}
-                      <p className="text-[10px] mt-1" style={{ color: "var(--clr-text-faint)" }}>
+                      <p className="text-[11px] mt-1" style={{ color: "var(--clr-text-faint)" }}>
                         选择要分析的目标细胞类型，支持多选
                       </p>
                     </div>
@@ -771,7 +771,7 @@ export default function Phase2ParamPage({ pipeline, token, onComplete, species =
                           })}
                         </div>
                       )}
-                      <p className="text-[10px] mt-1.5" style={{ color: "var(--clr-text-faint)" }}>
+                      <p className="text-[11px] mt-1.5" style={{ color: "var(--clr-text-faint)" }}>
                         点击标记为"正常参考"的细胞类型（绿色高亮）。未标记的将作为待检测组。
                       </p>
                     </div>
@@ -794,7 +794,7 @@ export default function Phase2ParamPage({ pipeline, token, onComplete, species =
           <option value="svg">SVG (矢量·可编辑)</option>
           <option value="tiff">TIFF (600dpi·投稿级)</option>
         </select>
-        <span style={{ color: "var(--clr-text-faint)", fontSize: 10 }}>不选默认PNG</span>
+        <span style={{ color: "var(--clr-text-faint)", fontSize: 11 }}>不选默认PNG</span>
       </div>
 
       {/* 开始分析按钮 */}

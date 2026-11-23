@@ -47,6 +47,7 @@ export default function FileUploadModal({
   const [fileInfo, setFileInfo] = useState<FileInfo | null>(null);
   const [uploadedFile, setUploadedFile] = useState<{ name: string; path: string } | null>(null);
   const [dragging, setDragging] = useState(false);
+  const [confirmingClose, setConfirmingClose] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -58,6 +59,7 @@ export default function FileUploadModal({
     setInspecting(false);
     setError(null);
     setDragging(false);
+    setConfirmingClose(false);
   };
 
   // 打开模态框时清空残留状态；组件卸载或关闭时终止进行中的上传
@@ -81,6 +83,7 @@ export default function FileUploadModal({
     setUploadProgress(null);
     setInspecting(false);
     setStatusText("");
+    setConfirmingClose(false);
     if (!silent) {
       setError("已取消上传");
     }
@@ -89,14 +92,27 @@ export default function FileUploadModal({
   const handleRequestClose = () => {
     const busy = uploadProgress !== null || inspecting;
     if (busy) {
-      if (!window.confirm("文件正在上传或解析中，确定要取消并关闭吗？")) {
-        return;
-      }
-      handleCancelUpload(true);
+      setConfirmingClose(true);
+      return;
     }
     resetAllState();
     onClose();
   };
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (uploadProgress !== null || inspecting) {
+        setConfirmingClose(true);
+      } else {
+        resetAllState();
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isOpen, uploadProgress, inspecting, onClose]);
 
   const handleFileUpload = async (file: File) => {
     const CHUNK = 5 * 1024 * 1024; // 5MB per chunk
@@ -306,6 +322,42 @@ export default function FileUploadModal({
 
         {/* 内容区域 */}
         <div className="p-6 overflow-y-auto" style={{ maxHeight: "calc(90vh - 140px)" }}>
+          {/* 忙时关闭内联二次确认 */}
+          {confirmingClose && isBusy && (
+            <div
+              className="mb-4 px-4 py-3 rounded-lg text-xs border flex flex-wrap items-center justify-between gap-3"
+              style={{
+                borderColor: "var(--clr-amber)",
+                background: "rgba(200, 96, 25, 0.06)",
+                color: "var(--clr-text)",
+              }}
+            >
+              <span>文件正在上传或解析中，确定取消上传并关闭吗？</span>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setConfirmingClose(false)}
+                  className="px-3 py-1 rounded border font-medium transition-colors hover:bg-black/5 cursor-pointer"
+                  style={{ borderColor: "var(--clr-border)", color: "var(--clr-text-muted)", background: "var(--clr-bg-card)" }}
+                >
+                  继续上传
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleCancelUpload(true);
+                    resetAllState();
+                    onClose();
+                  }}
+                  className="px-3 py-1 rounded font-semibold text-white cursor-pointer"
+                  style={{ background: "var(--clr-danger)" }}
+                >
+                  取消并关闭
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* 错误提示 */}
           {error && (
             <div
