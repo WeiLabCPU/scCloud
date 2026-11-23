@@ -141,7 +141,7 @@ export default function ProjectSelector({
       {/* 选择器按钮 */}
       <button
         onClick={() => { setOpen(!open); setShowNew(false); setError(null); setDeletingId(null); }}
-        className="flex items-center gap-3 px-4 py-2 card hover:shadow-md transition-all text-sm w-full"
+        className="flex items-center gap-3 px-4 py-2 card card-interactive hover:shadow-md transition-all text-sm w-full"
       >
         <IconChart className="text-[#C86019]" />
         <span className="flex-1 text-left" style={{ color: "var(--clr-text)" }}>
@@ -152,7 +152,7 @@ export default function ProjectSelector({
 
       {/* 弹出管理面板 — 始终挂载，通过 CSS transition 实现从顶部滑下动画 */}
       <div
-        className="absolute top-full right-0 mt-2 w-96 z-50 rounded-lg overflow-hidden"
+        className="absolute top-full right-0 mt-2 w-96 max-w-[calc(100vw-2rem)] z-50 rounded-lg overflow-hidden"
         style={{
           background: "var(--clr-bg-card)",
           border: open ? "1px solid var(--clr-border)" : "1px solid transparent",
@@ -189,12 +189,12 @@ export default function ProjectSelector({
           {showNew && (
             <div className="p-4 space-y-3" style={{ borderBottom: "1px solid var(--clr-border)", background: "var(--clr-bg-alt)" }}>
               <div>
-                <label className="block text-[10px] mb-1" style={{ color: "var(--clr-text-muted)" }}>项目名称 *</label>
+                <label className="block text-[11px] mb-1" style={{ color: "var(--clr-text-muted)" }}>项目名称 *</label>
                 <input type="text" value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="例: PBMC_3k" className={inputCls} style={{ borderColor: "var(--clr-border)" }} autoFocus onKeyDown={(e) => e.key === "Enter" && handleCreate()} />
               </div>
               <div className="flex gap-2">
                 <div className="flex-1 relative">
-                  <label className="block text-[10px] mb-1" style={{ color: "var(--clr-text-muted)" }}>物种</label>
+                  <label className="block text-[11px] mb-1" style={{ color: "var(--clr-text-muted)" }}>物种</label>
                   <button
                     onClick={() => setShowSpeciesDropdown(!showSpeciesDropdown)}
                     type="button"
@@ -229,7 +229,7 @@ export default function ProjectSelector({
                   )}
                 </div>
                 <div className="flex-1">
-                  <label className="block text-[10px] mb-1" style={{ color: "var(--clr-text-muted)" }}>描述 (可选)</label>
+                  <label className="block text-[11px] mb-1" style={{ color: "var(--clr-text-muted)" }}>描述 (可选)</label>
                   <input type="text" value={newDesc} onChange={(e) => setNewDesc(e.target.value)} placeholder="简短描述" className={inputCls} style={{ borderColor: "var(--clr-border)" }} />
                 </div>
               </div>
@@ -246,7 +246,7 @@ export default function ProjectSelector({
               <div className="p-8 text-center flex flex-col items-center">
                 <IconFolder size={32} className="mb-2 opacity-30" />
                 <p className="text-xs" style={{ color: "var(--clr-text-muted)" }}>暂无项目</p>
-                <p className="text-[10px] mt-1" style={{ color: "var(--clr-text-faint)" }}>点击上方「+ 新建」创建第一个项目</p>
+                <p className="text-[11px] mt-1" style={{ color: "var(--clr-text-faint)" }}>点击上方「+ 新建」创建第一个项目</p>
               </div>
             ) : (
               projects.map((p) => (
@@ -262,7 +262,7 @@ export default function ProjectSelector({
                     <span className="text-stone-400"><IconDNA size={16} /></span>
                     <div className="flex-1 min-w-0">
                       <div className="text-sm font-medium truncate" style={{ color: p.id === selectedId ? "var(--clr-amber)" : "var(--clr-dark)" }}>{p.name}</div>
-                      <div className="text-[10px] flex items-center gap-2" style={{ color: "var(--clr-text-faint)" }}>
+                      <div className="text-[11px] flex items-center gap-2" style={{ color: "var(--clr-text-faint)" }}>
                         <span>{new Date(p.created_at + (!p.created_at.endsWith("Z") ? "Z" : "")).toLocaleDateString("zh-CN")}</span>
                         {(() => { const rem = getProjectRemainingDays(p.created_at); return rem > 0 ? (
                           <><span>·</span><span style={{ color: rem <= 2 ? "var(--clr-danger)" : undefined }}>剩余 {rem} 天</span></>
@@ -279,8 +279,8 @@ export default function ProjectSelector({
 
                   {deletingId === p.id ? (
                     <div className="flex items-center gap-1">
-                      <button onClick={(e) => { e.stopPropagation(); handleDelete(p.id); }} className="text-[10px] px-2 py-1 rounded text-white" style={{ background: "var(--clr-danger)" }}>确认</button>
-                      <button onClick={() => setDeletingId(null)} className="text-[10px] px-2 py-1 rounded" style={{ background: "var(--clr-bg-alt)", color: "var(--clr-text-muted)" }}>取消</button>
+                      <button onClick={(e) => { e.stopPropagation(); handleDelete(p.id); }} className="text-[11px] px-2 py-1 rounded text-white" style={{ background: "var(--clr-danger)" }}>确认</button>
+                      <button onClick={() => setDeletingId(null)} className="text-[11px] px-2 py-1 rounded" style={{ background: "var(--clr-bg-alt)", color: "var(--clr-text-muted)" }}>取消</button>
                     </div>
                   ) : (
                     <button onClick={(e) => { e.stopPropagation(); setDeletingId(p.id); }} className="opacity-0 group-hover:opacity-100 transition-all text-xs p-1" style={{ color: "var(--clr-text-faint)" }} title="删除项目">
@@ -293,7 +293,7 @@ export default function ProjectSelector({
           </div>
 
           {projects.length > 0 && (
-            <div className="px-4 py-2 text-[10px]" style={{ borderTop: "1px solid var(--clr-border)", background: "var(--clr-bg-alt)", color: "var(--clr-text-faint)" }}>
+            <div className="px-4 py-2 text-[11px]" style={{ borderTop: "1px solid var(--clr-border)", background: "var(--clr-bg-alt)", color: "var(--clr-text-faint)" }}>
               共 {projects.length} 个项目
             </div>
           )}

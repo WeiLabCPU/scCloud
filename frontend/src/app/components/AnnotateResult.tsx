@@ -6,8 +6,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
 import { submitTask, getTask, apiFetch, updateTaskResult, type Task, getAuthToken} from "../lib/api";
-import DeckScatterPlot from "./charts/DeckScatterPlot";
-import type { ScatterData } from "./charts/ScatterPlot";
+import DeckScatterPlot, { type ScatterData } from "./charts/DeckScatterPlot";
 import GeneExpressionPopup from "./GeneExpressionPopup";
 
 function getToken() {
@@ -504,6 +503,7 @@ export default function AnnotateResult({
   // 保存编辑后的注释结果（持久化成功后才更新本地状态，防止静默吞错丢编辑）
   const [savingResults, setSavingResultsState] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [plotDownloadError, setPlotDownloadError] = useState<string | null>(null);
   const handleSaveResults = useCallback(async () => {
     if (savingResults || Object.keys(editedResults).length === 0) return;
 
@@ -696,6 +696,7 @@ export default function AnnotateResult({
             {plotDownloadSrc && (
               <button
                 onClick={async () => {
+                  setPlotDownloadError(null);
                   try {
                     const resp = await fetch(`/api/tasks/${taskId}/plot?name=${encodeURIComponent(plotDownloadName)}`, {
                       headers: { Authorization: `Bearer ${token}` }
@@ -710,7 +711,7 @@ export default function AnnotateResult({
                     a.click();
                     document.body.removeChild(a);
                     URL.revokeObjectURL(url);
-                  } catch(e) { alert("下载失败"); }
+                  } catch(e) { setPlotDownloadError("下载失败: " + (e instanceof Error ? e.message : "未知错误")); }
                 }}
                 className="inline-flex items-center px-1.5 py-1 rounded text-[11px] font-medium transition-all hover:shadow-sm"
                 style={{ border: "1px solid var(--clr-border)", color: "var(--clr-amber-dark)", background: "rgba(200,96,25,0.04)" }}
@@ -745,6 +746,7 @@ export default function AnnotateResult({
             <AuthImg src={plotSrc} alt="Annotation UMAP" token={token} />
             <button
               onClick={async () => {
+                setPlotDownloadError(null);
                 try {
                   const resp = await fetch(`/api/tasks/${taskId}/plot?name=${encodeURIComponent(plotDownloadName)}`, {
                     headers: { Authorization: `Bearer ${token}` }
@@ -759,7 +761,7 @@ export default function AnnotateResult({
                   a.click();
                   document.body.removeChild(a);
                   URL.revokeObjectURL(url);
-                } catch(e) { alert("下载失败: " + e); }
+                } catch(e) { setPlotDownloadError("下载失败: " + (e instanceof Error ? e.message : "未知错误")); }
               }}
               className="absolute bottom-3 right-3 inline-flex items-center justify-center w-9 h-9 rounded-lg transition-all hover:scale-110"
               style={{ background: "rgba(255,255,255,0.92)", boxShadow: "0 2px 8px rgba(0,0,0,0.10)", color: "var(--clr-amber)" }}
@@ -768,6 +770,16 @@ export default function AnnotateResult({
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
             </button>
           </div>
+        </div>
+      )}
+
+      {plotDownloadError && (
+        <div
+          className="flex items-center justify-between gap-2 px-3 py-2 rounded text-xs"
+          style={{ background: "rgba(184,84,80,0.08)", border: "1px solid rgba(184,84,80,0.25)", color: "var(--clr-danger)" }}
+        >
+          <span>{plotDownloadError}</span>
+          <button type="button" onClick={() => setPlotDownloadError(null)} className="px-1.5 py-0.5 rounded hover:bg-black/5 cursor-pointer" aria-label="关闭提示">×</button>
         </div>
       )}
 
@@ -1035,7 +1047,7 @@ export default function AnnotateResult({
                               }}
                               onMouseDown={(e) => e.preventDefault()}
                             >
-                              <div className="text-[10px] mb-1" style={{ color: "var(--clr-text-muted)" }}>
+                              <div className="text-[11px] mb-1" style={{ color: "var(--clr-text-muted)" }}>
                                 该细胞类型的标记基因：
                               </div>
                               <div className="flex flex-wrap gap-1.5" style={{ maxHeight: 200, overflowY: "auto" }}>
@@ -1057,7 +1069,7 @@ export default function AnnotateResult({
                                         setGeneMousePos({ x: rect.left, y: rect.bottom + 4 });
                                       }
                                     }}
-                                    className="px-1.5 py-0.5 rounded text-[10px] transition-colors hover:opacity-80"
+                                    className="px-1.5 py-0.5 rounded text-[11px] transition-colors hover:opacity-80"
                                     style={{
                                       background: "rgba(200,96,25,0.08)",
                                       color: "var(--clr-amber-dark)",
@@ -1072,7 +1084,7 @@ export default function AnnotateResult({
                               {row.markers.length > 6 && (
                                 <button
                                   onMouseDown={() => setExpandedMarkers(prev => ({ ...prev, [row.cluster_id]: !prev[row.cluster_id] }))}
-                                  className="mt-1 text-[10px]"
+                                  className="mt-1 text-[11px]"
                                   style={{
                                     background: "transparent",
                                     color: "var(--clr-amber)",
@@ -1184,7 +1196,7 @@ export default function AnnotateResult({
             <table className="w-full text-xs" style={{ background: "var(--clr-bg-alt)" }}>
               <thead>
                 <tr style={{ borderBottom: "1px solid var(--clr-border)", background: "var(--clr-bg)" }}>
-                  <th className="px-3 py-2 text-left font-semibold sticky left-0" style={{ color: "var(--clr-amber-dark)", background: "var(--clr-bg)", zIndex: 1 }}>
+                  <th className="px-3 py-2 text-left font-semibold sticky left-0" style={{ color: "var(--clr-amber-dark)", background: "var(--clr-bg)", zIndex: 2, boxShadow: "1px 0 0 var(--clr-border)" }}>
                     CellType
                   </th>
                   <th className="px-3 py-2 text-left font-semibold" style={{ color: "var(--clr-amber-dark)", minWidth: 100 }}>
@@ -1206,7 +1218,7 @@ export default function AnnotateResult({
                       background: idx % 2 === 0 ? "transparent" : "rgba(255,255,255,0.4)",
                     }}
                   >
-                    <td className="px-3 py-1.5 font-medium sticky left-0" style={{ color: "var(--clr-text)", background: idx % 2 === 0 ? "var(--clr-bg-alt)" : "rgba(255,255,255,0.4)", zIndex: 1 }}>
+                    <td className="px-3 py-1.5 font-medium sticky left-0" style={{ color: "var(--clr-text)", background: idx % 2 === 0 ? "var(--clr-bg-alt)" : "#F8F4EF", zIndex: 2, boxShadow: "1px 0 0 var(--clr-border)" }}>
                       {row.celltype}
                     </td>
                     <td className="px-3 py-1.5 text-left" style={{ color: "var(--clr-text-muted)", fontSize: "11px", minWidth: 100 }}>

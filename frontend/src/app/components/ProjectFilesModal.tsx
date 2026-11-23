@@ -46,6 +46,17 @@ export default function ProjectFilesModal({
       .finally(() => setLoading(false));
   }, [isOpen, projectId]);
 
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !inspecting) {
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isOpen, inspecting, onClose]);
+
   if (!isOpen) return null;
 
   const existingSet = new Set(existingPaths);
@@ -81,7 +92,7 @@ export default function ProjectFilesModal({
   };
 
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/20" onClick={onClose} />
       <div
         className="relative w-full max-w-lg max-h-[80vh] overflow-hidden rounded-xl shadow-2xl animate-fade-in"
@@ -136,7 +147,7 @@ export default function ProjectFilesModal({
                     >
                       <td className="px-2 text-center" style={{ height: "32px", verticalAlign: "middle" }}>
                         {isExisting ? (
-                          <span className="text-[10px] leading-none" style={{ color: "var(--clr-text-faint)" }}>已添加</span>
+                          <span className="text-[11px] leading-none" style={{ color: "var(--clr-text-faint)" }}>已添加</span>
                         ) : (
                           <input type="checkbox" checked={isSelected} readOnly className="accent-[#C86019]" />
                         )}

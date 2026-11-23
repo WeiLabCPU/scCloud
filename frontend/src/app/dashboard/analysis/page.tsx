@@ -53,6 +53,7 @@ function AnalysisPageContent() {
   const [activePipelineId, setActivePipelineId] = useState<string | null>(
     ss?.activePipelineId ?? null
   );
+  const [exportError, setExportError] = useState<string | null>(null);
 
   const setActivePipelineIdPersist = (v: string | null | ((p: string | null) => string | null)) => {
     setActivePipelineId((prev) => {
@@ -82,6 +83,7 @@ function AnalysisPageContent() {
     const origHTML = btn.innerHTML;
     btn.innerHTML = '<span class="w-3 h-3 border-2 border-t-transparent rounded-full animate-spin"></span> 打包中...';
     btn.disabled = true;
+    setExportError(null);
     try {
       const dlUrl = `/api/projects/${project.id}/download`;
       const res = await authedFetch(dlUrl);
@@ -103,7 +105,7 @@ function AnalysisPageContent() {
       document.body.removeChild(a);
       setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch (err) {
-      alert("打包下载失败: " + (err instanceof Error ? err.message : ""));
+      setExportError("打包下载失败: " + (err instanceof Error ? err.message : "未知错误"));
     } finally {
       btn.innerHTML = origHTML;
       btn.disabled = false;
@@ -126,12 +128,12 @@ function AnalysisPageContent() {
 
   return (
     <div className="animate-fade-in">
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
         <h1 className="text-2xl font-bold" style={{ fontFamily: "var(--font-serif)", color: "var(--clr-dark-deep)" }}>
           scRNA分析
         </h1>
-        <div className="flex items-center gap-3">
-          <div className="w-72">
+        <div className="flex items-center gap-3 w-full sm:w-auto">
+          <div className="w-full sm:w-72">
             <ProjectSelector
               selectedId={project?.id ?? (initialProjectId ? Number(initialProjectId) : null)}
               hasSelectedProject={project !== null}
@@ -140,6 +142,20 @@ function AnalysisPageContent() {
           </div>
         </div>
       </div>
+
+      {exportError && (
+        <div
+          className="mb-4 flex items-center justify-between gap-2 px-3 py-2 rounded text-xs border"
+          style={{
+            borderColor: "var(--clr-danger)",
+            background: "rgba(184, 84, 80, 0.06)",
+            color: "var(--clr-danger)",
+          }}
+        >
+          <span>{exportError}</span>
+          <button type="button" onClick={() => setExportError(null)} className="px-1.5 py-0.5 rounded hover:bg-black/5 cursor-pointer" aria-label="关闭提示">×</button>
+        </div>
+      )}
 
       <div className="flex gap-2 mb-6 border-b" style={{ borderColor: "var(--clr-border)" }}>
         <button

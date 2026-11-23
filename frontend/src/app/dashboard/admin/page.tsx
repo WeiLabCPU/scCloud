@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState, useCallback } from "react";
 import { listUsers, updateUser, deleteUser, getCurrentUser, getAuthItem, type AdminUser } from "../../lib/api";
+import ConfirmDialog from "../../components/ConfirmDialog";
 
 export default function AdminPage() {
   const [users, setUsers] = useState<AdminUser[]>([]);
@@ -10,9 +11,18 @@ export default function AdminPage() {
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [editUser, setEditUser] = useState<AdminUser | null>(null);
+  const [editError, setEditError] = useState<string | null>(null);
+  const [savingEdit, setSavingEdit] = useState(false);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [batchLoading, setBatchLoading] = useState(false);
+  const [confirmAction, setConfirmAction] = useState<
+    | { type: "single"; user: AdminUser }
+    | { type: "batch"; ids: number[] }
+    | null
+  >(null);
+  const [confirmLoading, setConfirmLoading] = useState(false);
   const [currentAdminId, setCurrentAdminId] = useState<number | null>(null);
   const [currentAdminName, setCurrentAdminName] = useState<string>(() => getAuthItem("username") || "");
   const pageSize = 20;
@@ -49,6 +59,18 @@ export default function AdminPage() {
     loadUsers();
   }, [loadUsers]);
 
+  useEffect(() => {
+    if (!editUser) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !savingEdit) {
+        setEditUser(null);
+        setEditError(null);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [editUser, savingEdit]);
+
   const toggleSelect = (id: number) => {
     setSelected(prev => {
       const next = new Set(prev);
@@ -67,24 +89,16 @@ export default function AdminPage() {
     }
   };
 
-  const batchDelete = async () => {
+  const batchDelete = () => {
     if (selected.size === 0) return;
-    if (!confirm(`确定要删除选中的 ${selected.size} 个用户吗？此操作不可撤销。`)) return;
-    setBatchLoading(true);
-    let ok = 0, fail = 0;
-    for (const id of selected) {
-      try { await deleteUser(id); ok++; }
-      catch { fail++; }
-    }
-    setBatchLoading(false);
-    setSelected(new Set());
-    if (fail > 0) alert(`已删除 ${ok} 个，${fail} 个失败（可能包含受保护账户）`);
-  loadUsers();
+    setNotice(null);
+    setConfirmAction({ type: "batch", ids: Array.from(selected) });
   };
 
   const batchSetRole = async (role: string) => {
     if (selected.size === 0) return;
     setBatchLoading(true);
+    setNotice(null);
     let ok = 0, fail = 0;
     for (const id of selected) {
       try { await updateUser(id, { role }); ok++; }
@@ -92,16 +106,19 @@ export default function AdminPage() {
     }
     setBatchLoading(false);
     setSelected(new Set());
-    if (fail > 0) alert(`已更新 ${ok} 个，${fail} 个失败`);
-  loadUsers();
+    if (fail > 0) setNotice(`已更新 ${ok} 个，${fail} 个失败`);
+    loadUsers();
   };
 
   const handleEdit = (user: AdminUser) => {
+    setEditError(null);
     setEditUser({ ...user });
   };
 
   const handleSave = async () => {
-    if (!editUser) return;
+    if (!editUser || savingEdit) return;
+    setSavingEdit(true);
+    setEditError(null);
     try {
       await updateUser(editUser.id, {
         role: editUser.role,
@@ -113,17 +130,42 @@ export default function AdminPage() {
       setEditUser(null);
       loadUsers();
     } catch (e) {
-      alert("更新失败: " + (e instanceof Error ? e.message : "未知错误"));
+      setEditError("更新失败: " + (e instanceof Error ? e.message : "未知错误"));
+    } finally {
+      setSavingEdit(false);
     }
   };
 
-  const handleDelete = async (user: AdminUser) => {
-    if (!confirm(`确定要删除用户 "${user.username}" 吗？此操作不可撤销。`)) return;
+  const handleDelete = (user: AdminUser) => {
+    setNotice(null);
+    setConfirmAction({ type: "single", user });
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!confirmAction) return;
+    setConfirmLoading(true);
+    setNotice(null);
     try {
-      await deleteUser(user.id);
+      if (confirmAction.type === "single") {
+        await deleteUser(confirmAction.user.id);
+      } else {
+        setBatchLoading(true);
+        let ok = 0, fail = 0;
+        for (const id of confirmAction.ids) {
+          try { await deleteUser(id); ok++; }
+          catch { fail++; }
+        }
+        setBatchLoading(false);
+        setSelected(new Set());
+        if (fail > 0) setNotice(`已删除 ${ok} 个，${fail} 个失败（可能包含受保护账户）`);
+      }
+      setConfirmAction(null);
       loadUsers();
     } catch (e) {
-      alert("删除失败: " + (e instanceof Error ? e.message : "未知错误"));
+      setNotice("删除失败: " + (e instanceof Error ? e.message : "未知错误"));
+      setConfirmAction(null);
+    } finally {
+      setConfirmLoading(false);
     }
   };
 
@@ -167,6 +209,16 @@ export default function AdminPage() {
         </div>
       )}
 
+      {notice && (
+        <div
+          className="flex items-center justify-between gap-2 px-3 py-2 rounded text-xs border"
+          style={{ borderColor: "var(--clr-danger)", background: "rgba(184, 84, 80, 0.08)", color: "var(--clr-danger)" }}
+        >
+          <span>{notice}</span>
+          <button type="button" onClick={() => setNotice(null)} className="px-1.5 py-0.5 rounded hover:bg-black/5 cursor-pointer" aria-label="关闭提示">×</button>
+        </div>
+      )}
+
       {/* 工具栏 */}
       <div className="flex items-center gap-2">
         <button
@@ -179,7 +231,7 @@ export default function AdminPage() {
         >
           {selected.size > 0 ? "取消全选" : "全选"}
         </button>
-        <span className="text-[10px]" style={{ color: "var(--clr-text-faint)" }}>
+        <span className="text-[11px]" style={{ color: "var(--clr-text-faint)" }}>
           {`已选 ${selected.size} 个`}
         </span>
       </div>
@@ -282,12 +334,12 @@ export default function AdminPage() {
                   <td className="px-3 py-2 font-medium" style={{ color: "var(--clr-text)" }}>
                     {u.username}
                     {isSelf && (
-                      <span className="ml-1.5 px-1 py-0.5 rounded text-[9px] font-bold" style={{ background: "var(--clr-amber)", color: "#fff" }}>当前管理员</span>
+                      <span className="ml-1.5 px-1 py-0.5 rounded text-[11px] font-bold" style={{ background: "var(--clr-amber)", color: "#fff" }}>当前管理员</span>
                     )}
                   </td>
                   <td className="px-3 py-2">
                     <span
-                      className="px-1.5 py-0.5 rounded text-[10px] font-medium"
+                      className="px-1.5 py-0.5 rounded text-[11px] font-medium"
                       style={roleStyle}
                     >
                       {roleLabel}
@@ -299,7 +351,7 @@ export default function AdminPage() {
                   <td className="px-3 py-2 font-mono" style={{ color: "var(--clr-text-muted)" }}>{u.max_projects}</td>
                   <td className="px-3 py-2">
                     <span
-                      className="px-1.5 py-0.5 rounded text-[10px] font-medium"
+                      className="px-1.5 py-0.5 rounded text-[11px] font-medium"
                       style={{
                         background: u.is_active ? "var(--clr-success)" : "var(--clr-danger)",
                         color: "#fff",
@@ -311,7 +363,7 @@ export default function AdminPage() {
                   <td className="px-3 py-2 text-right">
                     <button
                       onClick={() => handleEdit(u)}
-                      className="px-2 py-1 rounded text-[10px] font-medium mr-1 transition-all hover:opacity-80"
+                      className="px-2 py-1 rounded text-[11px] font-medium mr-1 transition-all hover:opacity-80"
                       style={{ background: "var(--clr-amber)", color: "#fff" }}
                     >
                       编辑
@@ -319,7 +371,7 @@ export default function AdminPage() {
                     <button
                       onClick={() => handleDelete(u)}
                       disabled={isSelf}
-                      className="px-2 py-1 rounded text-[10px] font-medium transition-all hover:opacity-80"
+                      className="px-2 py-1 rounded text-[11px] font-medium transition-all hover:opacity-80"
                       style={isSelf ? { background: "#ccc", color: "#999", cursor: "not-allowed" } : { background: "var(--clr-danger)", color: "#fff" }}
                     >
                       删除
@@ -361,9 +413,9 @@ export default function AdminPage() {
       {/* 编辑弹窗 */}
       {editUser && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
           style={{ background: "rgba(0,0,0,0.4)" }}
-          onClick={() => setEditUser(null)}
+          onClick={() => { if (!savingEdit) { setEditUser(null); setEditError(null); } }}
         >
           <div
             className="rounded-xl shadow-2xl p-6 w-full max-w-md space-y-4"
@@ -374,9 +426,15 @@ export default function AdminPage() {
               编辑用户 — {editUser.username}
             </h3>
 
+            {editError && (
+              <div className="px-3 py-2 rounded text-xs" style={{ background: "rgba(184, 84, 80, 0.08)", border: "1px solid var(--clr-danger)", color: "var(--clr-danger)" }}>
+                {editError}
+              </div>
+            )}
+
             <div className="space-y-3">
               <div>
-                <label className="block text-[10px] font-medium mb-1" style={{ color: "var(--clr-text-faint)" }}>
+                <label className="block text-[11px] font-medium mb-1" style={{ color: "var(--clr-text-faint)" }}>
                   角色
                 </label>
                 <select
@@ -408,7 +466,7 @@ export default function AdminPage() {
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-[10px] font-medium mb-1" style={{ color: "var(--clr-text-faint)" }}>
+                  <label className="block text-[11px] font-medium mb-1" style={{ color: "var(--clr-text-faint)" }}>
                     操作配额
                   </label>
                   <input
@@ -420,7 +478,7 @@ export default function AdminPage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-[10px] font-medium mb-1" style={{ color: "var(--clr-text-faint)" }}>
+                  <label className="block text-[11px] font-medium mb-1" style={{ color: "var(--clr-text-faint)" }}>
                     已用次数
                   </label>
                   <input
@@ -433,7 +491,7 @@ export default function AdminPage() {
                 </div>
               </div>
               <div>
-                <label className="block text-[10px] font-medium mb-1" style={{ color: "var(--clr-text-faint)" }}>
+                <label className="block text-[11px] font-medium mb-1" style={{ color: "var(--clr-text-faint)" }}>
                   最大项目数
                 </label>
                 <input
@@ -459,23 +517,43 @@ export default function AdminPage() {
 
             <div className="flex justify-end gap-2 pt-2">
               <button
-                onClick={() => setEditUser(null)}
-                className="px-3 py-1.5 rounded text-xs"
+                onClick={() => { setEditUser(null); setEditError(null); }}
+                disabled={savingEdit}
+                className="px-3 py-1.5 rounded text-xs disabled:opacity-50"
                 style={{ color: "var(--clr-text-muted)", border: "1px solid var(--clr-border)" }}
               >
                 取消
               </button>
               <button
                 onClick={handleSave}
-                className="px-3 py-1.5 rounded text-xs font-medium text-white"
+                disabled={savingEdit}
+                className="px-3 py-1.5 rounded text-xs font-medium text-white disabled:opacity-50"
                 style={{ background: "var(--clr-amber)" }}
               >
-                保存
+                {savingEdit ? "保存中..." : "保存"}
               </button>
             </div>
           </div>
         </div>
       )}
+
+      {/* 删除确认弹窗 */}
+      <ConfirmDialog
+        open={Boolean(confirmAction)}
+        title={confirmAction?.type === "batch" ? "批量删除用户" : "删除用户"}
+        message={
+          confirmAction?.type === "batch"
+            ? `确定要删除选中的 ${confirmAction.ids.length} 个用户吗？此操作不可撤销。`
+            : confirmAction?.type === "single"
+              ? `确定要删除用户 "${confirmAction.user.username}" 吗？此操作不可撤销。`
+              : ""
+        }
+        confirmLabel="确认删除"
+        danger
+        loading={confirmLoading}
+        onConfirm={handleConfirmDelete}
+        onCancel={() => { if (!confirmLoading) setConfirmAction(null); }}
+      />
     </div>
   );
 }

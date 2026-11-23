@@ -13,6 +13,7 @@ import { submitTask, hasPhase2Access, isGuest } from "../../../lib/api";
 import { apiFetch } from "../../../lib/api";
 import ProgressTracker from "../../../components/ProgressTracker";
 import ResultViewer from "../../../components/ResultViewer";
+import ConfirmDialog from "../../../components/ConfirmDialog";
 import Phase2ParamPage from "./Phase2ParamPage";
 import type { Task } from "../../../lib/api";
 import {
@@ -97,26 +98,39 @@ export default function PipelineView({ pipelineId, token, projectName, projectSp
   const [activeStep, setActiveStep] = useState<string>("qc");
   // 用户手动选择步骤后，停止自动跳转到运行中步骤
   const userSelectedRef = useRef(false);
+  const layoutContainerRef = useRef<HTMLDivElement>(null);
+  const [sidebarWidth, setSidebarWidth] = useState(224); // 左侧导航栏宽度，默认 224px (w-56)
+  const isResizing = useRef(false);
 
   // 拖拽调整面板宽度
-  const startResize = () => { isResizing.current = true; };
-  const stopResize = () => { isResizing.current = false; };
+  const startResize = () => {
+    isResizing.current = true;
+    document.body.style.userSelect = "none";
+    document.body.style.cursor = "col-resize";
+  };
+  const stopResize = () => {
+    if (!isResizing.current) return;
+    isResizing.current = false;
+    document.body.style.userSelect = "";
+    document.body.style.cursor = "";
+  };
   const doResize = (e: MouseEvent) => {
     if (!isResizing.current) return;
-    const newWidth = e.clientX - 32; // 减去左边距
-    if (newWidth >= 180 && newWidth <= 400) {
-      setSidebarWidth(newWidth);
-    }
+    const left = layoutContainerRef.current?.getBoundingClientRect().left ?? 16;
+    const newWidth = Math.max(180, Math.min(400, e.clientX - left));
+    setSidebarWidth(newWidth);
   };
   useEffect(() => {
     window.addEventListener("mousemove", doResize);
     window.addEventListener("mouseup", stopResize);
     const handleAnnotationUpdate = () => { getPipeline(token, pipelineId).then(setPipeline).catch(() => {}); };
-    window.addEventListener("annotation-updated", handleAnnotationUpdate as any);
+    window.addEventListener("annotation-updated", handleAnnotationUpdate as EventListener);
     return () => {
       window.removeEventListener("mousemove", doResize);
       window.removeEventListener("mouseup", stopResize);
-    window.removeEventListener("annotation-updated", handleAnnotationUpdate as any);
+      window.removeEventListener("annotation-updated", handleAnnotationUpdate as EventListener);
+      document.body.style.userSelect = "";
+      document.body.style.cursor = "";
     };
   }, []);
   // 降维与聚类步骤内的子 tab：默认显示聚类结果
@@ -130,8 +144,15 @@ export default function PipelineView({ pipelineId, token, projectName, projectSp
     setTimeout(() => document.addEventListener("click", handler), 0);
     return () => document.removeEventListener("click", handler);
   }, [showBackMenu]);
-  const [sidebarWidth, setSidebarWidth] = useState(224); // 左侧导航栏宽度，默认 224px (w-56)
-  const isResizing = useRef(false);
+  const [actionNotice, setActionNotice] = useState<{ type: "error" | "info"; message: string } | null>(null);
+  const [confirmState, setConfirmState] = useState<{
+    title: string;
+    message: string;
+    confirmLabel: string;
+    danger?: boolean;
+    action: "reset_phase2" | "stop_pipeline";
+  } | null>(null);
+  const [confirmLoading, setConfirmLoading] = useState(false);
   // 步骤失败对话框
   const [showFailDialog, setShowFailDialog] = useState(false);
   // 配额耗尽对话框
@@ -141,6 +162,23 @@ export default function PipelineView({ pipelineId, token, projectName, projectSp
   const [failStepInfo, setFailStepInfo] = useState<{ stepId: string; stepLabel: string; errorMsg: string; taskParams: Record<string, unknown> } | null>(null);
   // 避免重复弹出同一个失败对话框
   const dismissedFailsRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (!showFailDialog && !showQuotaDialog && !showUpgradeDialog) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (showFailDialog && failStepInfo) {
+        dismissedFailsRef.current.add(failStepInfo.stepId);
+        setShowFailDialog(false);
+      } else if (showQuotaDialog) {
+        setShowQuotaDialog(false);
+      } else if (showUpgradeDialog) {
+        setShowUpgradeDialog(false);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [showFailDialog, failStepInfo, showQuotaDialog, showUpgradeDialog]);
 
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout>;
@@ -280,11 +318,37 @@ export default function PipelineView({ pipelineId, token, projectName, projectSp
   const rcCurrentTask = reduceClusterTab === "cluster" ? clusterTask : reduceTask;
   const rcCurrentStatus = reduceClusterTab === "cluster" ? clusterStatus : reduceStatus;
 
+  const handleConfirmAction = async () => {
+    if (!confirmState) return;
+    setConfirmLoading(true);
+    setActionNotice(null);
+    try {
+      await apiFetch(`/api/pipeline/${pipelineId}/cancel`, { method: "POST" });
+      const data = await getPipeline(token, pipelineId);
+      setPipeline(data);
+      if (confirmState.action === "reset_phase2") {
+        setShowPhase2Param(true);
+      }
+      setConfirmState(null);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "未知错误";
+      if (confirmState.action === "reset_phase2") {
+        setShowPhase2Param(true);
+        setConfirmState(null);
+      } else {
+        setActionNotice({ type: "error", message: "停止失败: " + msg });
+        setConfirmState(null);
+      }
+    } finally {
+      setConfirmLoading(false);
+    }
+  };
+
   return (
     <PipelineErrorBoundary onBack={() => router.push("/dashboard/analysis")}>
     <div className="animate-fade-in space-y-3">
       {/* 顶部栏：返回 + 状态 */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="relative">
           <button
             className="px-3 py-1 text-sm rounded inline-flex items-center gap-1"
@@ -311,21 +375,25 @@ export default function PipelineView({ pipelineId, token, projectName, projectSp
               <button
                 className="w-full text-left px-4 py-2.5 text-sm rounded-b-lg hover:bg-[#eff6ff] transition-colors"
                 style={{ color: "var(--clr-text)" }}
-                onClick={async () => {
+                onClick={() => {
                   setShowBackMenu(false);
+                  setActionNotice(null);
                   if (!annotateCompleted) {
-                    alert("基础分析（Phase 1 细胞注释）尚未完成，暂无法配置 Phase 2。如需中止当前运行请点击「停止分析」或「重新设置 Phase 1」。");
+                    setActionNotice({
+                      type: "info",
+                      message: "基础分析（Phase 1 细胞注释）尚未完成，暂无法配置 Phase 2。如需中止当前运行请点击「停止分析」或「重新设置 Phase 1」。",
+                    });
                     return;
                   }
                   if (pipeline.status === "running" || pipeline.status === "pending") {
-                    if (!confirm("当前 Phase 2 分析正在运行，重新设置将停止正在执行的步骤（已完成结果保留），确定继续吗？")) {
-                      return;
-                    }
-                    try {
-                      await apiFetch(`/api/pipeline/${pipelineId}/cancel`, { method: "POST" });
-                      const data = await getPipeline(token, pipelineId);
-                      setPipeline(data);
-                    } catch {}
+                    setConfirmState({
+                      title: "重新设置 Phase 2",
+                      message: "当前 Phase 2 分析正在运行，重新设置将停止正在执行的步骤（已完成结果保留），确定继续吗？",
+                      confirmLabel: "停止并重新配置",
+                      danger: true,
+                      action: "reset_phase2",
+                    });
+                    return;
                   }
                   setShowPhase2Param(true);
                 }}
@@ -339,15 +407,15 @@ export default function PipelineView({ pipelineId, token, projectName, projectSp
         <div className="flex items-center gap-2">
           {(pipeline.status === "running" || pipeline.status === "pending") && (
             <button
-              onClick={async () => {
-                if (!confirm("确定要停止当前分析吗？已完成的步骤结果将保留。")) return;
-                try {
-                  await apiFetch(`/api/pipeline/${pipelineId}/cancel`, { method: "POST" });
-                  const data = await getPipeline(token, pipelineId);
-                  setPipeline(data);
-                } catch (e) {
-                  alert("停止失败: " + (e instanceof Error ? e.message : "未知错误"));
-                }
+              onClick={() => {
+                setActionNotice(null);
+                setConfirmState({
+                  title: "停止分析",
+                  message: "确定要停止当前分析吗？已完成的步骤结果将保留。",
+                  confirmLabel: "停止分析",
+                  danger: true,
+                  action: "stop_pipeline",
+                });
               }}
               className="px-3 py-1 rounded text-xs font-medium"
               style={{ background: "var(--clr-danger)", color: "#fff", cursor: "pointer", border: "none" }}
@@ -363,6 +431,28 @@ export default function PipelineView({ pipelineId, token, projectName, projectSp
           </div>
         </div>
       </div>
+
+      {/* 操作反馈横幅 */}
+      {actionNotice && (
+        <div
+          className="flex items-center justify-between gap-2 px-4 py-2.5 rounded-lg border text-xs"
+          style={
+            actionNotice.type === "error"
+              ? { borderColor: "var(--clr-danger)", background: "rgba(184, 84, 80, 0.08)", color: "var(--clr-danger)" }
+              : { borderColor: "#fcd34d", background: "rgba(251,191,36,0.08)", color: "#92400e" }
+          }
+        >
+          <span>{actionNotice.message}</span>
+          <button
+            type="button"
+            onClick={() => setActionNotice(null)}
+            className="px-1.5 py-0.5 rounded hover:bg-black/5 cursor-pointer shrink-0"
+            aria-label="关闭提示"
+          >
+            ×
+          </button>
+        </div>
+      )}
 
       {/* 运行中提示 */}
       {pipeline.status === "running" && (
@@ -446,9 +536,12 @@ export default function PipelineView({ pipelineId, token, projectName, projectSp
       )}
 
       {/* 双面板布局 */}
-      <div className="flex gap-6">
+      <div ref={layoutContainerRef} className="flex flex-col md:flex-row gap-4 md:gap-6">
         {/* ── 左侧导航（sticky 固定） ── */}
-        <div className="shrink-0 sticky top-4 self-start" style={{ width: sidebarWidth }}>
+        <div
+          className="w-full md:w-[var(--sidebar-w)] shrink-0 md:sticky md:top-4 md:self-start"
+          style={{ "--sidebar-w": `${sidebarWidth}px` } as React.CSSProperties}
+        >
           {visibleSteps.map((step, index) => {
             const st = getStepStatus(step.id);
             const isActive = activeStep === step.id;
@@ -494,7 +587,7 @@ export default function PipelineView({ pipelineId, token, projectName, projectSp
         {/* 拖拽条 */}
         <div
           onMouseDown={startResize}
-          className="w-1 cursor-col-resize shrink-0 self-stretch opacity-0 hover:opacity-100 transition-opacity"
+          className="hidden md:block w-1.5 cursor-col-resize shrink-0 self-stretch opacity-0 hover:opacity-100 transition-opacity"
           style={{ background: "var(--clr-border)" }}
           title="拖拽调整面板宽度"
         />
@@ -603,7 +696,7 @@ export default function PipelineView({ pipelineId, token, projectName, projectSp
                             const data = await getPipeline(token, pipelineId);
                             setPipeline(data);
                           } catch (e) {
-                            alert("重新运行失败: " + (e instanceof Error ? e.message : "未知错误"));
+                            setActionNotice({ type: "error", message: "重新运行失败: " + (e instanceof Error ? e.message : "未知错误") });
                           }
                         }}
                         className="mt-3 px-4 py-1.5 rounded text-xs font-medium text-white"
@@ -645,7 +738,7 @@ export default function PipelineView({ pipelineId, token, projectName, projectSp
                     {activeStepDef.subSteps.length > 1 && (
                       <div className="flex items-center gap-2 mb-3">
                         <span className="text-xs font-semibold" style={{ color: "var(--clr-amber-dark)" }}>{subLabel}</span>
-                        <span className="text-[10px]" style={{ color: { completed: "#2D8A56", running: "var(--clr-amber)", failed: "var(--clr-danger)", pending: "var(--clr-text-muted)", cancelled: "var(--clr-text-muted)" }[subStatus] || "" }}>
+                        <span className="text-[11px]" style={{ color: { completed: "#2D8A56", running: "var(--clr-amber)", failed: "var(--clr-danger)", pending: "var(--clr-text-muted)", cancelled: "var(--clr-text-muted)" }[subStatus] || "" }}>
                           {{ completed: "已完成", running: "运行中", failed: "已失败", pending: "待执行", cancelled: "已取消" }[subStatus] || ""}
                         </span>
                       </div>
@@ -723,7 +816,7 @@ export default function PipelineView({ pipelineId, token, projectName, projectSp
                           onClick={async () => {
                             try {
                               if (!pipeline.project_id) {
-                                alert("项目ID不存在，无法重新运行");
+                                setActionNotice({ type: "error", message: "项目ID不存在，无法重新运行" });
                                 return;
                               }
                               const result = await submitTask({
@@ -736,7 +829,7 @@ export default function PipelineView({ pipelineId, token, projectName, projectSp
                               setPipeline(data);
                             } catch (e) {
                               console.error("重新运行失败:", e);
-                              alert("重新运行失败: " + (e instanceof Error ? e.message : "未知错误"));
+                              setActionNotice({ type: "error", message: "重新运行失败: " + (e instanceof Error ? e.message : "未知错误") });
                             }
                           }}
                           className="mt-3 px-4 py-1.5 rounded text-xs font-medium text-white"
@@ -762,7 +855,7 @@ export default function PipelineView({ pipelineId, token, projectName, projectSp
       </div>
       {/* 步骤失败对话框 */}
       {showFailDialog && failStepInfo && createPortal(
-        <div className="fixed inset-0 z-50 flex items-center justify-center">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           {/* 背景遮罩 */}
           <div
             className="absolute inset-0"
@@ -849,7 +942,7 @@ export default function PipelineView({ pipelineId, token, projectName, projectSp
                     const refreshed = await getPipeline(token, pipelineId);
                     setPipeline(refreshed);
                   } catch (e) {
-                    alert("重新运行失败: " + (e instanceof Error ? e.message : "未知错误"));
+                    setActionNotice({ type: "error", message: "重新运行失败: " + (e instanceof Error ? e.message : "未知错误") });
                   }
                 }}
                 className="flex-1 px-4 py-2.5 rounded-lg text-sm font-semibold text-white transition-all"
@@ -883,7 +976,7 @@ export default function PipelineView({ pipelineId, token, projectName, projectSp
       )}
       {/* 配额耗尽对话框 */}
       {showQuotaDialog && createPortal(
-        <div className="fixed inset-0 z-[60] flex items-center justify-center">
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
           <div className="absolute inset-0" style={{ background: "rgba(0,0,0,0.35)" }} onClick={() => setShowQuotaDialog(false)} />
           <div className="relative w-full max-w-md rounded-xl shadow-2xl p-6" style={{ background: "var(--clr-bg-card)", border: "1px solid var(--clr-border)" }}>
             <div className="flex items-center gap-3 mb-4">
@@ -912,7 +1005,7 @@ export default function PipelineView({ pipelineId, token, projectName, projectSp
       )}
       {/* Phase 2 升级提示对话框 */}
       {showUpgradeDialog && createPortal(
-        <div className="fixed inset-0 z-[60] flex items-center justify-center">
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
           <div className="absolute inset-0" style={{ background: "rgba(0,0,0,0.35)" }} onClick={() => setShowUpgradeDialog(false)} />
           <div className="relative w-full max-w-md rounded-xl shadow-2xl p-6" style={{ background: "var(--clr-bg-card)", border: "1px solid var(--clr-border)" }}>
             <div className="flex items-center gap-3 mb-4">
@@ -946,6 +1039,17 @@ export default function PipelineView({ pipelineId, token, projectName, projectSp
         </div>,
         document.body
       )}
+      {/* 确认操作对话框 */}
+      <ConfirmDialog
+        open={Boolean(confirmState)}
+        title={confirmState?.title || ""}
+        message={confirmState?.message || ""}
+        confirmLabel={confirmState?.confirmLabel}
+        danger={confirmState?.danger}
+        loading={confirmLoading}
+        onConfirm={handleConfirmAction}
+        onCancel={() => { if (!confirmLoading) setConfirmState(null); }}
+      />
     </div>
     </PipelineErrorBoundary>
   );
