@@ -989,6 +989,8 @@ out_up=$(
 )
 rc_up=$?
 [ "$rc_up" -eq 0 ] || { fail "U24" "start.sh --no-pull failed under podman mock rc=$rc_up"; ok_u24=0; }
+assert_contains "U24" "$out_up" "服务已就绪" || ok_u24=0
+assert_not_contains "U24" "$out_up" "Docker daemon 未配置代理" || ok_u24=0
 grep -q -- '-f docker-compose.yml -f docker-compose.rootless.yml up -d' "$dlog" || { fail "U24" "rootless overlay not applied under rootless podman"; ok_u24=0; }
 [ "$ok_u24" = "1" ] && pass "U24: podman-docker 正确识别 rootless/GraphRoot、免报 dockerd 代理错位并叠加 rootless 配置"
 
