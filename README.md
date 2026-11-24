@@ -177,10 +177,11 @@ sh ./start.sh --build        # 本地构建（一般用户不需要；无需 r-e
 - 更新仓库后执行 `git pull && sh ./start.sh --no-pull` 即可自动重建 `backend` 并完成启动。  
 - 若在非 root 账号下使用 Rootless Podman，请确认已由管理员开启 `sudo loginctl enable-linger $(whoami)`，避免退出 SSH 后健康检查定时器停止。
 
-**拉取镜像失败 / 超时 / 提示缺少 `r-library`**  
+**拉取镜像失败 / 超时 / 下载很慢 / 提示缺少 `r-library`**  
+- 首次全量拉取约 **3.6 GB**（其中 `sccloud-r-engine` 占 **3.15 GB**），国内直连 GHCR 速度较慢且管道输出不会每秒刷新进度；已完成的分层支持断点续传（如有代理可 `Ctrl+C` 后配置代理并执行 `sh ./start.sh --sync-proxy`）。  
 - 先跑 `sh ./start.sh --doctor` 检查 Docker 代理、网络连通性和 `.env` 镜像地址。  
 - 终端设置了 `https_proxy` 但拉镜像仍超时，说明代理没配进 Docker daemon（见上方「Rootless Docker 与代理配置」）。  
-- 普通用户**不需要 `r-engine/r-library` 目录**，直接拉取预构建镜像即可；离线环境可从 [Release](https://github.com/WeiLabCPU/scCloud/releases) 下载 `sccloud-r-engine-image.tar.gz` 放入 `./data/` 后重跑 `sh ./start.sh`。  
+- 普通用户**不需要 `r-engine/r-library` 目录**，直接拉取预构建镜像即可；离线或直连较慢时，可从 [Release](https://github.com/WeiLabCPU/scCloud/releases) 下载 `sccloud-r-engine-image.tar.gz` 放入 `./data/` 后再跑 `sh ./start.sh`，脚本会在 `pull` 前自动预先导入 R 镜像并跳过远端拉取 `r-engine`（仅需拉取其余约 450 MB 轻量组件）。  
 - 旧版本已生成过 `.env`（含原 `ghcr.io/zyzhou-saffron/` 地址）的用户，`git pull` 后直接执行 `sh ./start.sh` 会自动迁移到 `ghcr.io/cangiolo/`。
 
 **分析一直失败 / 内存不足**  
