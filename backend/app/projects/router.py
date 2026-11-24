@@ -237,7 +237,7 @@ async def download_project(
         "annotate": "3_Cell_Annotation",
         "enrich": "5_Pathway_Enrichment", "monocle": "6_Trajectory",
         "cellchat": "7_CellChat", "infercnv": "9_inferCNV",
-        "wgcna": "8_WGCNA", "subset": "2_DimRed_Cluster",
+        "wgcna": "8_WGCNA", "scenic": "10_SCENIC", "subset": "2_DimRed_Cluster",
     }
     _ts_re = _re.compile(r"_\d{14}_")
     _steps = set(STEP_DIR.keys())

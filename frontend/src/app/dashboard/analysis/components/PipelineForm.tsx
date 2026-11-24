@@ -57,13 +57,13 @@ const STEP_LABELS: Record<string, string> = {
   qc: "数据预处理与标准化", normalize: "数据预处理与标准化", reduce: "降维与聚类",
   cluster: "降维与聚类", markers: "差异基因", annotate: "细胞注释",
   enrich: "通路富集", monocle: "拟时序分析", cellchat: "细胞通讯",
-  infercnv: "拷贝数变异", wgcna: "WGCNA",
+  infercnv: "拷贝数变异", wgcna: "WGCNA", scenic: "转录因子调控",
 };
 
 /** 合并后的步骤序号映射 */
 const STEP_INDEX: Record<string, number> = {
   qc: 1, normalize: 1, reduce: 2, cluster: 2, annotate: 3,
-  markers: 4, enrich: 5, cellchat: 6, wgcna: 7, monocle: 8, infercnv: 9,
+  markers: 4, enrich: 5, cellchat: 6, wgcna: 7, monocle: 8, infercnv: 9, scenic: 10,
 };
 
 /** 计算 Pipeline 总步骤数（Phase1 合并后 3 步 + Phase2 步数） */
@@ -72,7 +72,7 @@ const PHASE1_COUNT = 4;
 const PHASE1_ORDER: Record<string, number> = {
   qc: 1, normalize: 2, reduce: 3, annotate: 4,
 };
-const PHASE2_STEPS = ["markers", "enrich", "cellchat", "wgcna", "monocle", "infercnv"];
+const PHASE2_STEPS = ["markers", "enrich", "cellchat", "wgcna", "monocle", "infercnv", "scenic"];
 
 function getTotalSteps(params?: Record<string, unknown>): number {
   const enabled = (params?.enabled_steps as string[] | undefined) || [];

@@ -2516,6 +2516,7 @@ function GenericStepResult({ data, stepId, taskId, task }: { data: Record<string
     monocle: "拟时序分析",
     cellchat: "细胞通讯分析",
     infercnv: "拷贝数变异分析",
+    scenic: "转录因子调控分析",
   };
 
   const [activeTab, setActiveTab] = useState<"plots" | "data">("plots");

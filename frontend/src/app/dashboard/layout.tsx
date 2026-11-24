@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
-import { IconBeaker, IconConvert, IconGear, IconUsers } from "../components/Icons";
+import { IconBeaker, IconConvert, IconDatabase, IconGear, IconUsers } from "../components/Icons";
 import { isGuest, ROLE_LABELS, getAuthToken, getAuthItem, getCurrentUser } from "../lib/api";
 import AuthModal from "../components/AuthModal";
 
@@ -16,6 +16,7 @@ import AuthModal from "../components/AuthModal";
 const NAV_ITEMS = [
   { href: "/dashboard/analysis", label: "分析流程", Icon: IconBeaker },
   { href: "/dashboard/convert", label: "多样本整合", Icon: IconConvert },
+  { href: "/dashboard/datasets", label: "数据集", Icon: IconDatabase },
   { href: "/dashboard/settings", label: "设置", Icon: IconGear },
 ];
 

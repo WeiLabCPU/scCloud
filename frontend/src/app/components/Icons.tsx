@@ -270,3 +270,14 @@ export function IconUsers({ className, size = defaultProps.size }: IconProps) {
     </svg>
   );
 }
+
+/** 数据库圆柱 — 数据集目录 */
+export function IconDatabase({ className, size = defaultProps.size }: IconProps) {
+  return (
+    <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <ellipse cx="12" cy="5" rx="8" ry="3" />
+      <path d="M4 5v14c0 1.66 3.58 3 8 3s8-1.34 8-3V5" />
+      <path d="M4 12c0 1.66 3.58 3 8 3s8-1.34 8-3" />
+    </svg>
+  );
+}

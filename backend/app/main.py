@@ -182,6 +182,7 @@ from app.upload.router import router as upload_router  # noqa: E402
 from app.ws.router import router as ws_router  # noqa: E402
 from app.pipeline.router import router as pipeline_router  # noqa: E402
 from app.admin.router import router as admin_router
+from app.datasets.router import router as datasets_router
 
 app.include_router(auth_router)
 app.include_router(projects_router)
@@ -191,6 +192,7 @@ app.include_router(admin_router)
 app.include_router(convert_router)
 app.include_router(upload_router)
 app.include_router(ws_router)
+app.include_router(datasets_router)
 
 
 # ===== 健康检查 =====
