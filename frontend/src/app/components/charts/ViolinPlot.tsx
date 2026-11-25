@@ -82,7 +82,7 @@ export default function ViolinPlot({ data, height = 400 }: ViolinPlotProps) {
           gridcolor: "rgba(168, 162, 158, 0.25)",
         },
         yaxis: {
-          title: { text: "Expression" },
+          title: "Expression",
           gridcolor: "rgba(168, 162, 158, 0.25)",
           zerolinecolor: "rgba(168, 162, 158, 0.3)",
         },

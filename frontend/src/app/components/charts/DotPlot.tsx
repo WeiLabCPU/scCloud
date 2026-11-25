@@ -17,7 +17,6 @@
 
 import dynamic from "next/dynamic";
 import { useMemo } from "react";
-import type { Data } from "plotly.js";
 
 const Plot = dynamic(() => import("react-plotly.js"), { ssr: false });
 
@@ -34,7 +33,7 @@ interface DotPlotProps {
 }
 
 export default function DotPlot({ data, height = 400 }: DotPlotProps) {
-  const trace = useMemo<Data | null>(() => {
+  const trace = useMemo(() => {
     if (!data) return null;
 
     const x: string[] = [];
