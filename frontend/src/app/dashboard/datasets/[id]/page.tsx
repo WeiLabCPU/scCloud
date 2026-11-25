@@ -8,7 +8,8 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import AuthModal from "../../../components/AuthModal";
+import { isGuest } from "../../../lib/api";
 import {
   getDataset,
   downloadDatasetFile,
@@ -32,7 +33,8 @@ export default function DatasetDetailPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  const router = useRouter();
+  const [authOpen, setAuthOpen] = useState(false);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
   const [id, setId] = useState("");
   const [ds, setDs] = useState<DatasetDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -52,21 +54,20 @@ export default function DatasetDetailPage({
   }, [params]);
 
   const handleDownload = async (filename: string) => {
-    if (!hasLoginToken()) {
-      alert("请先登录后再下载数据集文件。");
-      router.push("/");
+    if (!hasLoginToken() || isGuest()) {
+      setAuthOpen(true);
       return;
     }
+    setDownloadError(null);
     setDownloading(filename);
     try {
       const { blob, filename: fname } = await downloadDatasetFile(id, filename);
       saveBlob(blob, fname);
     } catch (e) {
       if (e instanceof DatasetAuthError) {
-        alert("登录状态已失效，请重新登录后下载。");
-        router.push("/");
+        setAuthOpen(true);
       } else {
-        alert(e instanceof Error ? e.message : "下载失败");
+        setDownloadError(e instanceof Error ? e.message : "下载失败");
       }
     } finally {
       setDownloading(null);
@@ -92,6 +93,9 @@ export default function DatasetDetailPage({
       <Link href="/dashboard/datasets" className="inline-flex items-center gap-1 text-xs" style={{ color: "var(--clr-text-muted)" }}>
         ← 返回数据集目录
       </Link>
+
+      <AuthModal open={authOpen} onClose={() => setAuthOpen(false)} defaultTab="login" />
+      {downloadError && <p role="alert" className="mt-3 text-sm" style={{ color: "var(--clr-danger)" }}>{downloadError}</p>}
 
       {/* Hero */}
       <section
@@ -186,7 +190,7 @@ export default function DatasetDetailPage({
               <a
                 href={`https://doi.org/${ds.doi}`}
                 target="_blank"
-                rel="noreferrer"
+                rel="noopener noreferrer"
                 className="mt-1 inline-block text-xs"
                 style={{ color: "var(--clr-amber)" }}
               >
@@ -207,7 +211,7 @@ export default function DatasetDetailPage({
                 key={i}
                 href={link.u}
                 target="_blank"
-                rel="noreferrer"
+                rel="noopener noreferrer"
                 className="flex items-center justify-between gap-3 px-4 py-3 rounded-[var(--radius)] transition-colors hover:bg-[var(--clr-surface-hover)]"
                 style={{ background: "var(--clr-bg-card)", border: "1px solid var(--clr-border)" }}
               >

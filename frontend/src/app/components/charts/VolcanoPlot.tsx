@@ -58,8 +58,7 @@ export default function VolcanoPlot({
   projectName,
   completedAt,
 }: VolcanoPlotProps) {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const plotRef = useRef<any>(null);
+  const plotRef = useRef<HTMLElement | null>(null);
 
   const { upGenes, downGenes, nsGenes } = useMemo(() => {
     const up: VolcanoPoint[] = [];
@@ -157,7 +156,7 @@ export default function VolcanoPlot({
   }, [projectName, completedAt, title]);
 
   const handleDownload = useCallback(async () => {
-    const el = plotRef.current?.el;
+    const el = plotRef.current;
     if (!el) return;
     try {
       const Plotly = await import("plotly.js-dist-min");
@@ -196,7 +195,9 @@ export default function VolcanoPlot({
         </p>
       )}
       <Plot
-        ref={plotRef}
+        onInitialized={(_, graphDiv) => { plotRef.current = graphDiv; }}
+        onUpdate={(_, graphDiv) => { plotRef.current = graphDiv; }}
+        onPurge={() => { plotRef.current = null; }}
         data={traces as Plotly.Data[]}
         layout={{
           width: undefined,

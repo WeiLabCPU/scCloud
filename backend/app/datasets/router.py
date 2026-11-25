@@ -87,6 +87,18 @@ async def list_datasets():
     }
 
 
+@router.get("/scenic/references")
+async def scenic_references():
+    """只开放已挂载的 v9 gene-ranking 数据库；下载中的 .part 文件不计入。"""
+    db_root = _data_root().parent / "cistarget"
+    references = [
+        ref for ref in ("hg38", "hg19", "mm10", "mm9")
+        if any(p.is_file() and p.stat().st_size > 0
+               for p in db_root.glob(f"{ref}*mc9nr*.genes_vs_motifs.rankings.feather"))
+    ]
+    return {"references": references}
+
+
 @router.get("/{dataset_id}")
 async def get_dataset(dataset_id: str):
     """数据集详情（公开浏览）。"""
@@ -116,12 +128,14 @@ async def download_local_file(
     allowed = {f["name"] for f in ds.get("files", [])}
     # 只取文件名，剥掉任何目录成分，防止 ../ 穿越
     safe_name = os.path.basename(filename)
+    if safe_name != filename:
+        raise HTTPException(status_code=404, detail="文件不存在")
     if safe_name not in allowed:
         raise HTTPException(status_code=404, detail="文件不存在或未开放下载")
 
     file_path = (_data_root() / ds["id"] / safe_name).resolve()
     root = _data_root().resolve()
-    if not str(file_path).startswith(str(root)) or not file_path.exists():
+    if not file_path.is_relative_to(root) or not file_path.is_file():
         raise HTTPException(status_code=404, detail="文件不存在")
 
     media_type = "text/markdown" if safe_name.lower().endswith(".md") else "application/octet-stream"

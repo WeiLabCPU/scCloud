@@ -102,12 +102,12 @@ export default function ScatterPlot({
         plot_bgcolor: "transparent",
         font: { color: "#57534e", family: "Inter, sans-serif", size: 11 },
         xaxis: {
-          title: `${method}_1`,
+          title: { text: `${method}_1` },
           gridcolor: "rgba(168, 162, 158, 0.25)",
           zerolinecolor: "rgba(168, 162, 158, 0.3)",
         },
         yaxis: {
-          title: `${method}_2`,
+          title: { text: `${method}_2` },
           gridcolor: "rgba(168, 162, 158, 0.25)",
           zerolinecolor: "rgba(168, 162, 158, 0.3)",
         },

@@ -75,6 +75,18 @@ RUN Rscript -e " \
     install.packages('rjags', type = 'source', Ncpus = 2L) \
 "
 
+# ===== SCENIC：官方源安装；不依赖宿主机私有 tarball =====
+ARG SCENIC_REF=7a74341745cecd3505310c6c5755cad456756cf9
+ARG RCISTARGET_REF=cddbff8ccb685557d25b821953ba5e1750f3174a
+ENV LIBARROW_BINARY=true
+RUN Rscript -e "options(repos = c(CRAN = 'https://cloud.r-project.org')); \
+    install.packages(c('BiocManager', 'remotes', 'arrow', 'mixtools', 'doRNG', 'doMC')); \
+    BiocManager::install(c('GSEABase', 'GENIE3', 'AUCell', 'BiocParallel', 'org.Hs.eg.db', 'org.Mm.eg.db'), ask = FALSE, update = FALSE); \
+    remotes::install_github('aertslab/RcisTarget@${RCISTARGET_REF}', upgrade = 'never', build_vignettes = FALSE); \
+    remotes::install_github('aertslab/SCENIC@${SCENIC_REF}', upgrade = 'never', build_vignettes = FALSE); \
+    required <- c('SCENIC', 'RcisTarget', 'GENIE3', 'AUCell', 'arrow', 'BiocParallel', 'org.Hs.eg.db', 'org.Mm.eg.db', 'pheatmap'); \
+    stopifnot(all(vapply(required, requireNamespace, logical(1), quietly = TRUE)))"
+
 # ===== 应用代码 =====
 COPY plumber.R worker.R run_job.R ./
 COPY R/ R/

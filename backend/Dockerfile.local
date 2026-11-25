@@ -3,5 +3,7 @@
 FROM ghcr.io/cangiolo/sccloud-backend:latest
 USER root
 COPY app/ /app/app/
+COPY alembic.ini /app/alembic.ini
+COPY alembic/ /app/alembic/
 RUN chown -R app:app /app/app
 USER app

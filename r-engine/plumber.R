@@ -1389,6 +1389,7 @@ function(req) {
 
   ref <- params$ref %||% "hg38"
   n_cores <- as.integer(params$n_cores %||% 8)
+  max_cells <- as.numeric(params$max_cells %||% 5000)
 
   # 依赖自检：缺包时给出明确提示，而不是崩在 library()
   required_pkgs <- c("SCENIC", "RcisTarget", "GENIE3", "AUCell")
@@ -1423,19 +1424,34 @@ function(req) {
     pro, outdir,
     ref = ref,
     nCores = n_cores,
+    maxCells = max_cells,
+    plot_format = plot_format,
     dbDir = "/app/data/cistarget",
     progress_callback = report
   )
 
+  # 将对外文件归档到项目顶层：ZIP 会排除中间输出目录。
+  archive_result <- function(path, label, ext) {
+    if (is.null(path)) return(NULL)
+    target <- file.path(project_path, make_output_name(project_path, "10", "scenic", label, ext))
+    if (!file.rename(path, target)) stop("无法归档 SCENIC 结果: ", basename(path))
+    target
+  }
+  result$heatmap_path <- archive_result(result$heatmap_path, "auc_heatmap", plot_format)
+  result$bin_heatmap_path <- archive_result(result$bin_heatmap_path, "binary_heatmap", plot_format)
+  result$table_path <- archive_result(result$table_path, "regulons", "csv")
+  result$auc_matrix_path <- archive_result(result$auc_matrix_path, "regulon_auc", "csv")
+  result$bin_matrix_path <- archive_result(result$bin_matrix_path, "regulon_binary", "csv")
+
   # 主图：regulon 活性 UMAP + 细胞类型 UMAP
-  plot_archive <- make_output_name(project_path, "7", "scenic", "regulon_umap", plot_format)
+  plot_archive <- make_output_name(project_path, "10", "scenic", "regulon_umap", plot_format)
   plot_path <- file.path(project_path, plot_archive)
   open_plot_device(plot_path, 2400, 1400, plot_format, units = "px")
   print(result$plot)
   dev.off()
 
   # 统计图：RidgePlot + VlnPlot
-  stat_archive <- make_output_name(project_path, "7", "scenic", "regulon_vln", plot_format)
+  stat_archive <- make_output_name(project_path, "10", "scenic", "regulon_vln", plot_format)
   stat_path <- file.path(project_path, stat_archive)
   open_plot_device(stat_path, 2000, 1800, plot_format, units = "px")
   print(result$stat_plot)

@@ -15,12 +15,21 @@
 #' @param ref     参考基因组: hg38 / hg19 / mm10 / mm9
 #' @param nCores  并行核数
 #' @param dbDir   cisTarget 数据库目录
-#' @param maxCells 推断 regulon 时抽取的最大细胞数；默认 Inf 表示使用全部细胞（与原脚本一致）
+#' @param maxCells 推断 regulon 时抽取的最大细胞数；默认 5000；仅限制网络推断，AUCell 仍对全部细胞评分
 #' @param progress_callback 进度回调函数 function(pct, msg)
 #' @return list(plot_path, stat_plot_path, heatmap_path, table_path, stats, scenic_data)
 RunScenic <- function(pro, outdir, ref = "hg38", nCores = 8,
-                      dbDir = "/app/data/cistarget", maxCells = Inf,
+                      dbDir = "/app/data/cistarget", maxCells = 5000,
+                      plot_format = "png",
                       progress_callback = NULL) {
+
+  if (length(maxCells) != 1L || !is.finite(maxCells) || maxCells < 1 || maxCells != floor(maxCells)) {
+    stop("max_cells 必须为正整数")
+  }
+  available_cores <- parallel::detectCores()
+  if (is.na(available_cores)) available_cores <- 1L
+  if (length(nCores) != 1L || !is.finite(nCores) || nCores < 1) stop("n_cores 必须为正整数")
+  nCores <- min(as.integer(nCores), available_cores)
 
   send_msg <- function(pct, msg) {
     if (!is.null(progress_callback)) progress_callback(pct, msg)
@@ -85,7 +94,7 @@ RunScenic <- function(pro, outdir, ref = "hg38", nCores = 8,
       pro@assays$RNA <- JoinLayers(pro@assays$RNA)
     }, error = function(e) message("[SCENIC] JoinLayers skipped: ", e$message))
   }
-  exprMat <- as.matrix(GetAssayData(pro, assay = "RNA", layer = "counts"))
+  exprMat <- GetAssayData(pro, assay = "RNA", layer = "counts")
 
   # -------------------------------------------------------------------
   # 2. 基因名标准化（去版本号 + 转符号 + 去重）
@@ -122,13 +131,13 @@ RunScenic <- function(pro, outdir, ref = "hg38", nCores = 8,
   }
 
   if (any(duplicated(rownames(exprMat)))) {
-    gene_means <- rowMeans(exprMat)
+    gene_means <- if (inherits(exprMat, "sparseMatrix")) Matrix::rowMeans(exprMat) else rowMeans(exprMat)
     exprMat <- exprMat[order(gene_means, decreasing = TRUE), , drop = FALSE]
     exprMat <- exprMat[!duplicated(rownames(exprMat)), , drop = FALSE]
   }
 
   # -------------------------------------------------------------------
-  # 3. 细胞抽样（默认 Inf = 使用全部细胞，与原脚本严格一致）
+  # 3. 在稀疏矩阵上抽样，仅将网络推断所需子集稠密化
   # -------------------------------------------------------------------
   if (is.finite(maxCells) && ncol(exprMat) > maxCells) {
     send_msg(6, sprintf("细胞数 %d 超过 %d，抽样用于 regulon 推断...", ncol(exprMat), maxCells))
@@ -142,8 +151,9 @@ RunScenic <- function(pro, outdir, ref = "hg38", nCores = 8,
   # -------------------------------------------------------------------
   # 4. 初始化 SCENIC 环境（挑选 cisTarget 数据库 + motif 注释）
   # -------------------------------------------------------------------
+  exprMat_sub <- as.matrix(exprMat_sub)
   send_msg(10, "初始化 SCENIC 环境...")
-  mydbs <- list.files(dbDir, pattern = paste0("^", ref))
+  mydbs <- list.files(dbDir, pattern = paste0("^", ref, ".*mc9nr.*[.]genes_vs_motifs[.]rankings[.]feather$"))
   if (length(mydbs) == 0) {
     stop(paste0("未找到 ", ref, " 的 cisTarget 数据库文件（目录: ", dbDir,
                 "）。请先下载并挂载对应物种的数据库。"))
@@ -254,7 +264,6 @@ RunScenic <- function(pro, outdir, ref = "hg38", nCores = 8,
 
   proauc <- AddMetaData(pro, AUC_df)
   proauc@assays$integrated <- NULL
-  saveRDS(proauc, file.path(int_dir, "proauc.rds"))
 
   BINmatrix <- readRDS(file.path(int_dir, "4.1_binaryRegulonActivity.Rds"))
   BIN_df <- data.frame(t(BINmatrix), check.names = FALSE)
@@ -263,7 +272,6 @@ RunScenic <- function(pro, outdir, ref = "hg38", nCores = 8,
 
   probin <- AddMetaData(pro, BIN_df)
   probin@assays$integrated <- NULL
-  saveRDS(probin, file.path(int_dir, "probin.rds"))
 
   # 展示用 regulon：必须同时存在于 AUC 与二值矩阵。
   # 二值化(Step4)会把在该样本中不活跃的 regulon 剔除，若直接取 AUC 第一列，
@@ -322,21 +330,25 @@ RunScenic <- function(pro, outdir, ref = "hg38", nCores = 8,
       CellType = pro@meta.data[colnames(mat), "CellType"],
       row.names = colnames(mat)
     )
-    tryCatch(
+    heatmap <- tryCatch(
       pheatmap(mat, show_colnames = FALSE, annotation_col = ann,
-               filename = file, fontsize = 6, fontsize_col = 8,
+               silent = TRUE, fontsize = 6, fontsize_col = 8,
                fontsize_row = 8, annotation_legend = TRUE, width = 6, height = 5,
                cluster_rows = nrow(mat) >= 2),
-      error = function(e) message("[SCENIC] 热图生成失败（跳过）: ", conditionMessage(e))
+      error = function(e) { message("[SCENIC] 热图生成失败（跳过）: ", conditionMessage(e)); NULL }
     )
+    if (!is.null(heatmap)) {
+      open_plot_device(file, 1800, 1500, plot_format, units = "px")
+      tryCatch(grid::grid.draw(heatmap$gtable), finally = dev.off())
+    }
     invisible(NULL)
   }
 
-  heatmap_file <- file.path(outdir, "myAUCmatrix_heatmap.png")
+  heatmap_file <- file.path(outdir, paste0("myAUCmatrix_heatmap.", plot_format))
   draw_regulon_heatmap(myAUCmatrix, heatmap_file)
   if (!file.exists(heatmap_file)) heatmap_file <- NULL
 
-  bin_heatmap_file <- file.path(outdir, "myBINmatrix_heatmap.png")
+  bin_heatmap_file <- file.path(outdir, paste0("myBINmatrix_heatmap.", plot_format))
   draw_regulon_heatmap(myBINmatrix, bin_heatmap_file)
   if (!file.exists(bin_heatmap_file)) bin_heatmap_file <- NULL
 
