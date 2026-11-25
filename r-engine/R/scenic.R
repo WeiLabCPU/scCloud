@@ -8,6 +8,16 @@
 # 输出: regulon AUC 矩阵、二进制矩阵、可视化图、regulon 清单 CSV
 # =====================================================================
 
+# 保持 AUCell 支持的矩阵类型；对稀疏矩阵直接 +1 会生成 dgeMatrix。
+scenic_logcounts <- function(exprMat) {
+  if (inherits(exprMat, "CsparseMatrix")) {
+    result <- as(exprMat, "dgCMatrix")
+    result@x <- log2(result@x + 1)
+    return(result)
+  }
+  as.matrix(log2(exprMat + 1))
+}
+
 #' SCENIC 转录因子调控分析
 #'
 #' @param pro     Seurat 对象（需含 RNA assay 的 counts 层，且已完成注释含 CellType）
@@ -232,8 +242,10 @@ RunScenic <- function(pro, outdir, ref = "hg38", nCores = 8,
   options(SCENIC_PARALLEL = NULL)
   Sys.setenv(SCENIC_PARALLEL = "")
   assign("scenicOptions", scenicOptions, envir = globalenv())
-  exprMat_all <- log2(exprMat + 1)
-  runSCENIC_3_scoreCells(scenicOptions, exprMat = exprMat_all)
+  exprMat_all <- scenic_logcounts(exprMat)
+  # 前端展示图由下方生成；跳过 SCENIC 内部额外图和 t-SNE，保留评分及阈值。
+  runSCENIC_3_scoreCells(scenicOptions, exprMat = exprMat_all,
+                        skipHeatmap = TRUE, skipTsne = TRUE)
 
   send_msg(88, "regulon 二值化...")
   # SCENIC 1.3.1 的已知边界问题：样本里只剩下 1 个 regulon 时，
@@ -242,7 +254,8 @@ RunScenic <- function(pro, outdir, ref = "hg38", nCores = 8,
   # 该函数在报错前已经把 4.1/4.2 二值化结果落盘，因此这里保留结果继续，
   # 只有连二值化文件都没生成时才重新抛出错误。
   tryCatch(
-    runSCENIC_4_aucell_binarize(scenicOptions, exprMat = exprMat_all),
+    runSCENIC_4_aucell_binarize(scenicOptions, exprMat = exprMat_all,
+                              skipBoxplot = TRUE, skipHeatmaps = TRUE, skipTsne = TRUE),
     error = function(e) {
       bin_file <- file.path(int_dir, "4.1_binaryRegulonActivity.Rds")
       if (!file.exists(bin_file)) stop(e)

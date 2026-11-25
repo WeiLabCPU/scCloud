@@ -3,6 +3,31 @@
 plumber_expr <- parse(file = "r-engine/plumber.R")
 scenic_expr <- parse(file = "r-engine/R/scenic.R")
 eval(scenic_expr)
+
+# Exercise the real transformation and AUCell dispatch, before mocking RunScenic.
+counts <- matrix(c(0, 1, 3, 0, 7, 0, 0, 2, 0, 4, 0, 0), nrow = 4,
+                 dimnames = list(paste0("gene", 1:4), paste0("cell", 1:3)))
+sparse_counts <- as(Matrix::Matrix(counts, sparse = TRUE), "dgCMatrix")
+logcounts <- scenic_logcounts(sparse_counts)
+stopifnot(inherits(logcounts, "dgCMatrix"),
+          identical(dimnames(logcounts), dimnames(counts)),
+          identical(as.matrix(logcounts), log2(counts + 1)),
+          identical(as.matrix(sparse_counts), counts),
+          length(logcounts@x) == length(sparse_counts@x),
+          identical(scenic_logcounts(counts), log2(counts + 1)))
+empty_counts <- sparse_counts * 0
+stopifnot(inherits(scenic_logcounts(empty_counts), "dgCMatrix"),
+          all(as.matrix(scenic_logcounts(empty_counts)) == 0))
+set.seed(123)
+rankings <- AUCell::AUCell_buildRankings(logcounts, plotStats = FALSE,
+                                       splitByBlocks = FALSE, verbose = FALSE)
+stopifnot(identical(dim(AUCell::getRanking(rankings)), dim(counts)))
+
+# Guard the optional flags against the installed SCENIC version.
+stopifnot(all(c("skipHeatmap", "skipTsne") %in%
+                names(formals(SCENIC::runSCENIC_3_scoreCells))),
+          all(c("skipBoxplot", "skipHeatmaps", "skipTsne") %in%
+                names(formals(SCENIC::runSCENIC_4_aucell_binarize))))
 stopifnot(inherits(try(RunScenic(NULL, tempdir(), maxCells = 0), silent = TRUE), "try-error"))
 stopifnot(inherits(try(RunScenic(NULL, tempdir(), nCores = 0), silent = TRUE), "try-error"))
 
@@ -46,4 +71,4 @@ stopifnot(length(paths) == 7L, all(file.exists(paths)),
           all(endsWith(unlist(result$plot_paths), ".pdf")),
           result$stats$n_cells_sub == 1234)
 on.exit_cleanup()
-cat("SCENIC parameter validation and output archive checks passed\n")
+cat("SCENIC sparse AUCell input, parameter validation and output archive checks passed\n")
