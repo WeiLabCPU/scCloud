@@ -44,6 +44,7 @@ route <- eval(route_expr[[1]])
 `%||%` <- function(x, y) if (is.null(x)) y else x
 create_progress_reporter <- function(...) function(...) invisible(NULL)
 open_plot_device <- function(path, ...) grDevices::pdf(path)
+sync_celltype_from_json <- function(pro, project_path) pro
 
 project <- tempfile("scenic-project-")
 dir.create(project)

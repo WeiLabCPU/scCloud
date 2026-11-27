@@ -275,6 +275,10 @@ RunScenic <- function(pro, outdir, ref = "hg38", nCores = 8,
   RegulonName_AUC <- gsub("\\)", "", gsub(" \\(", "_", colnames(AUC_df)))
   colnames(AUC_df) <- RegulonName_AUC
 
+  # 默认热图和前端下拉均以“活性方差最高”排序，保证 top1–5 是当前样本最有区分度的 regulon。
+  regulon_order <- colnames(AUC_df)[order(apply(AUC_df, 2, stats::var), decreasing = TRUE)]
+  AUC_df <- AUC_df[, regulon_order, drop = FALSE]
+
   proauc <- AddMetaData(pro, AUC_df)
   proauc@assays$integrated <- NULL
 
@@ -282,8 +286,9 @@ RunScenic <- function(pro, outdir, ref = "hg38", nCores = 8,
   BIN_df <- data.frame(t(BINmatrix), check.names = FALSE)
   RegulonName_BIN <- gsub("\\)", "", gsub(" \\(", "_", colnames(BIN_df)))
   colnames(BIN_df) <- RegulonName_BIN
+  BIN_df <- BIN_df[, intersect(regulon_order, colnames(BIN_df)), drop = FALSE]
 
-  probin <- AddMetaData(pro, BIN_df)
+  probin <- if (ncol(BIN_df) > 0) AddMetaData(pro, BIN_df) else pro
   probin@assays$integrated <- NULL
 
   # 展示用 regulon：必须同时存在于 AUC 与二值矩阵。
@@ -318,10 +323,10 @@ RunScenic <- function(pro, outdir, ref = "hg38", nCores = 8,
     theme(legend.position = "none")
   p_stat <- p_ridge + p_vln
 
-  # 热图: 前 15 个 regulon，AUC 版 + 二进制版（与原脚本一致）
+  # 热图: 默认展示活性最高的前 5 个 regulon；用户可在结果页多选重绘
   AUCmatrix_t <- t(AUC_df)
   BINmatrix_t <- t(BIN_df)
-  my_regulons <- rownames(AUCmatrix_t)[seq_len(min(15, nrow(AUCmatrix_t)))]
+  my_regulons <- rownames(AUCmatrix_t)[seq_len(min(5, nrow(AUCmatrix_t)))]
   myAUCmatrix <- AUCmatrix_t[rownames(AUCmatrix_t) %in% my_regulons, , drop = FALSE]
   myBINmatrix <- BINmatrix_t[rownames(BINmatrix_t) %in% my_regulons, , drop = FALSE]
 
@@ -401,4 +406,235 @@ RunScenic <- function(pro, outdir, ref = "hg38", nCores = 8,
     n_cells_sub = safe_ncol(exprMat_sub),
     regulons = as.list(colnames(AUC_df))
   )
+}
+
+# =====================================================================
+# Regulon 结果按需重绘
+# 复用 /scenic 已归档的轻量 CSV 与 seurat_annotated.rds，避免复制完整对象。
+# =====================================================================
+
+.scenic_plot_format <- function(plot_format) {
+  plot_format <- as.character(plot_format)[1]
+  if (is.na(plot_format) || !nzchar(plot_format)) plot_format <- "png"
+  if (!plot_format %in% c("png", "pdf", "svg", "tiff")) plot_format <- "png"
+  plot_format
+}
+
+.scenic_result_paths <- function(project_path) {
+  result_json <- file.path(project_path, "scenic_result.json")
+  auc_path <- NULL
+  bin_path <- NULL
+  if (file.exists(result_json)) {
+    result <- tryCatch(jsonlite::read_json(result_json, simplifyVector = FALSE),
+                       error = function(e) NULL)
+    if (!is.null(result$data_paths)) {
+      auc_value <- result$data_paths$regulon_auc
+      if (is.null(auc_value)) auc_value <- result$data_paths$regulon_auc_csv
+      bin_value <- result$data_paths$regulon_binary
+      if (is.null(bin_value)) bin_value <- result$data_paths$regulon_binary_csv
+      auc_path <- as.character(auc_value)[1]
+      bin_path <- as.character(bin_value)[1]
+    }
+  }
+  find_latest <- function(pattern) {
+    files <- list.files(project_path, pattern = pattern, full.names = TRUE)
+    if (length(files) == 0) return(NULL)
+    files[which.max(file.mtime(files))]
+  }
+  if (is.null(auc_path) || is.na(auc_path) || !file.exists(auc_path)) {
+    auc_path <- find_latest("_scenic_\\d{14}_regulon_auc(_csv)?[.]csv$")
+  }
+  if (is.null(bin_path) || is.na(bin_path) || !file.exists(bin_path)) {
+    bin_path <- find_latest("_scenic_\\d{14}_regulon_binary(_csv)?[.]csv$")
+  }
+  list(auc = auc_path, binary = bin_path)
+}
+
+.scenic_read_matrix <- function(path, cell_names = NULL) {
+  if (is.null(path) || is.na(path) || !file.exists(path)) return(NULL)
+  df <- utils::read.csv(path, check.names = FALSE, stringsAsFactors = FALSE)
+  if (ncol(df) < 2) return(NULL)
+  first_col <- as.character(df[[1]])
+  value_cols <- colnames(df)[-1]
+  if (!is.null(cell_names)) {
+    first_is_cells <- any(first_col %in% cell_names)
+    cols_are_cells <- any(value_cols %in% cell_names)
+    if (cols_are_cells && !first_is_cells) {
+      mat <- t(as.matrix(df[, -1, drop = FALSE]))
+      rownames(mat) <- value_cols
+      colnames(mat) <- first_col
+      return(mat)
+    }
+  }
+  mat <- as.matrix(df[, -1, drop = FALSE])
+  rownames(mat) <- first_col
+  mat
+}
+
+.scenic_load_project <- function(project_path) {
+  rds_path <- file.path(project_path, "seurat_annotated.rds")
+  if (!file.exists(rds_path)) stop("未找到 seurat_annotated.rds，请先完成细胞注释步骤")
+  pro <- readRDS(rds_path)
+  if (exists("sync_celltype_from_json", mode = "function")) {
+    pro <- sync_celltype_from_json(pro, project_path)
+  }
+  pro
+}
+
+.scenic_group_col <- function(pro) {
+  candidates <- c("CellType", "celltype", "cell_type", "Annotation", "seurat_clusters")
+  hit <- candidates[candidates %in% colnames(pro@meta.data)]
+  if (length(hit) == 0) NULL else hit[1]
+}
+
+.scenic_plot_prefix <- function(project_path, label) {
+  ts <- format(Sys.time(), "%Y%m%d%H%M%S", tz = "Asia/Shanghai")
+  tag <- gsub("[^A-Za-z0-9]+", "_", label)
+  paste0(basename(project_path), "_scenic_", ts, "_regulon_", tag)
+}
+
+run_scenic_regulon_plots <- function(project_path, regulon, plot_format = "png",
+                                     report = function(pct, msg) NULL) {
+  suppressPackageStartupMessages({
+    library(Seurat); library(ggplot2); library(patchwork)
+  })
+  ext <- .scenic_plot_format(plot_format)
+  paths <- .scenic_result_paths(project_path)
+  pro <- .scenic_load_project(project_path)
+  auc <- .scenic_read_matrix(paths$auc, colnames(pro))
+  if (is.null(auc)) stop("未找到 SCENIC regulon 活性矩阵，请先完成转录因子分析")
+  if (!(regulon %in% colnames(auc))) {
+    stop("Regulon '", regulon, "' 不存在；可选: ", paste(colnames(auc), collapse = ", "))
+  }
+
+  report(10, "加载细胞注释与 regulon 活性...")
+  common <- intersect(rownames(auc), colnames(pro))
+  if (length(common) == 0) stop("regulon 活性矩阵与注释对象没有匹配的细胞")
+
+  proauc <- AddMetaData(pro, data.frame(auc[common, , drop = FALSE], check.names = FALSE))
+  group_col <- .scenic_group_col(proauc)
+  reductions <- SeuratObject::Reductions(proauc)
+  if (length(reductions) == 0) stop("未找到降维结果，无法绘制 UMAP")
+  red <- if ("umap" %in% reductions) "umap" else reductions[1]
+
+  report(35, paste0("绘制 ", regulon, " UMAP..."))
+  p_auc <- FeaturePlot(proauc, features = regulon, reduction = red, label = TRUE) +
+    ggtitle(paste0(regulon, " (AUC)"))
+  p_cell <- DimPlot(proauc, reduction = red, group.by = group_col, label = !is.null(group_col)) +
+    ggtitle(if (is.null(group_col)) "Cell" else "CellType")
+
+  bin <- .scenic_read_matrix(paths$binary, colnames(pro))
+  has_binary <- !is.null(bin) && regulon %in% colnames(bin)
+  if (has_binary) {
+    bin_common <- intersect(rownames(bin), colnames(pro))
+    if (length(bin_common) > 0) {
+      probin <- AddMetaData(pro, data.frame(bin[bin_common, , drop = FALSE], check.names = FALSE))
+      p_bin <- FeaturePlot(probin, features = regulon, reduction = red, label = TRUE) +
+        ggtitle(paste0(regulon, " (binary)"))
+      p_umap <- p_auc | p_bin | p_cell
+    } else {
+      has_binary <- FALSE
+      p_umap <- p_auc | p_cell
+    }
+  } else {
+    p_umap <- p_auc | p_cell
+  }
+
+  prefix <- .scenic_plot_prefix(project_path, regulon)
+  umap_path <- file.path(project_path, paste0(prefix, "_umap.", ext))
+  ggsave(umap_path, p_umap, width = if (has_binary) 15 else 10, height = 4.6,
+         dpi = 300, limitsize = FALSE)
+
+  report(75, paste0("绘制 ", regulon, " 小提琴图..."))
+  p1 <- RidgePlot(proauc, features = regulon, group.by = group_col) + theme(legend.position = "none")
+  p2 <- VlnPlot(proauc, features = regulon, pt.size = 0, group.by = group_col) + theme(legend.position = "none")
+  violin_path <- file.path(project_path, paste0(prefix, "_violin.", ext))
+  ggsave(violin_path, p1 + p2, width = 11, height = 8, dpi = 300, limitsize = FALSE)
+
+  report(100, "完成")
+  list(
+    status = "success",
+    regulon = regulon,
+    binary_available = has_binary,
+    plot_paths = list(regulon_umap = umap_path, regulon_vln = violin_path)
+  )
+}
+
+run_scenic_heatmap <- function(project_path, regulons, plot_format = "png",
+                               report = function(pct, msg) NULL) {
+  suppressPackageStartupMessages({ library(Seurat); library(pheatmap); library(ggplot2) })
+  ext <- .scenic_plot_format(plot_format)
+  regulons <- unique(as.character(unlist(regulons)))
+  regulons <- regulons[nzchar(regulons)]
+  if (length(regulons) == 0) stop("请至少选择一个 regulon")
+
+  report(15, "加载 regulon 活性...")
+  paths <- .scenic_result_paths(project_path)
+  pro <- .scenic_load_project(project_path)
+  auc <- .scenic_read_matrix(paths$auc, colnames(pro))
+  if (is.null(auc)) stop("未找到 SCENIC regulon 活性矩阵，请先完成转录因子分析")
+  missing <- setdiff(regulons, colnames(auc))
+  if (length(missing) > 0) stop("以下 regulon 不存在: ", paste(missing, collapse = ", "))
+
+  common <- intersect(rownames(auc), colnames(pro))
+  if (length(common) == 0) stop("regulon 活性矩阵与注释对象没有匹配的细胞")
+  group_col <- .scenic_group_col(pro)
+  if (is.null(group_col)) stop("注释对象缺少 CellType 列，无法生成细胞类型均值热图")
+  cell_types <- as.character(pro@meta.data[common, group_col])
+  cell_types[is.na(cell_types) | !nzchar(cell_types)] <- "Unknown"
+  idx_list <- split(seq_along(common), cell_types)
+  agg <- sapply(idx_list, function(idx) {
+    colMeans(auc[common[idx], regulons, drop = FALSE], na.rm = TRUE)
+  })
+  if (is.null(dim(agg))) {
+    agg <- matrix(agg, nrow = length(regulons), dimnames = list(regulons, names(idx_list)))
+  } else {
+    agg <- agg[regulons, , drop = FALSE]
+  }
+
+  report(65, "绘制 regulon 热图...")
+  ts <- format(Sys.time(), "%Y%m%d%H%M%S", tz = "Asia/Shanghai")
+  heat_path <- file.path(project_path, paste0(
+    basename(project_path), "_scenic_", ts, "_regulon_heatmap_",
+    length(regulons), "regs.", ext
+  ))
+  vals <- as.vector(agg)
+  if (length(unique(vals[!is.na(vals)])) < 2) stop("所选 regulon 活性为常量，无法生成热图")
+  hm <- pheatmap(
+    agg,
+    cluster_rows = length(regulons) > 1,
+    cluster_cols = ncol(agg) > 1,
+    fontsize = 8, fontsize_row = 8, fontsize_col = 9,
+    color = colorRampPalette(c("#2C4A7C", "white", "#C86019"))(100),
+    silent = TRUE
+  )
+  open_plot_device(heat_path,
+                   width = max(1800, 1200 + ncol(agg) * 120),
+                   height = max(1200, 800 + length(regulons) * 90),
+                   format = ext, units = "px")
+  tryCatch(grid::grid.draw(hm$gtable), finally = dev.off())
+
+  bar_path <- file.path(project_path, paste0(
+    basename(project_path), "_scenic_", ts, "_regulon_bar_",
+    length(regulons), "regs.", ext
+  ))
+  bar_df <- data.frame(
+    CellType = rep(colnames(agg), each = nrow(agg)),
+    Regulon = rep(rownames(agg), times = ncol(agg)),
+    Activity = as.vector(agg),
+    stringsAsFactors = FALSE
+  )
+  p_bar <- ggplot(bar_df, aes(x = CellType, y = Activity, fill = CellType)) +
+    geom_col(show.legend = FALSE) +
+    facet_wrap(~Regulon, scales = "free_y") +
+    theme_bw(base_size = 10) +
+    labs(x = NULL, y = "Mean regulon activity") +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  ggsave(bar_path, p_bar,
+         width = max(8, min(18, 5 + length(regulons) * 1.8)),
+         height = 5, dpi = 300, limitsize = FALSE)
+
+  report(100, "完成")
+  list(status = "success", regulons = regulons,
+       plot_paths = list(regulon_heatmap = heat_path, regulon_bar = bar_path))
 }

@@ -604,7 +604,9 @@ function(req) {
   report(20, "计算线粒体比例...")
 
   # 添加线粒体百分比
-  if (!"percent.mt" %in% colnames(exp@meta.data)) {
+  # 多数据集合并时，部分文件自带 percent.mt、部分没有，合并后会出现 NA；此时需要重算。
+  if (!"percent.mt" %in% colnames(exp@meta.data) ||
+      anyNA(exp@meta.data[["percent.mt"]])) {
     exp[["percent.mt"]] <- PercentageFeatureSet(exp, pattern = "^MT-|^mt-")
   }
 
@@ -1407,6 +1409,7 @@ function(req) {
   rds_path <- file.path(project_path, "seurat_annotated.rds")
   if (!file.exists(rds_path)) stop("未找到 seurat_annotated.rds，请先完成细胞注释步骤")
   pro <- readRDS(rds_path)
+  pro <- sync_celltype_from_json(pro, project_path)
 
   # 输出目录：带时间戳，多次运行不覆盖
   outdir <- file.path(
@@ -1491,6 +1494,33 @@ function(req) {
     ),
     scenic_data = list(regulons = as.list(result$regulons))
   )
+}
+
+
+#* @post /scenic_regulon
+function(req) {
+  body <- jsonlite::fromJSON(req$postBody)
+  project_path <- body$project_path
+  params <- body$params
+  task_id <- params$task_id
+  report <- create_progress_reporter(task_id)
+  plot_format <- params$plot_format %||% "png"
+
+  report(3, "定位 SCENIC 结果...")
+  result_json <- file.path(project_path, "scenic_result.json")
+  if (!file.exists(result_json)) stop("未找到 SCENIC 结果，请先完成转录因子分析")
+
+  regulons <- params$regulons
+  if (!is.null(regulons) && length(regulons) > 0) {
+    regulons <- as.character(unlist(regulons))
+    return(run_scenic_heatmap(project_path, regulons,
+                              plot_format = plot_format, report = report))
+  }
+
+  regulon <- params$regulon
+  if (is.null(regulon) || !nzchar(regulon)) stop("请指定 regulon 或 regulons")
+  run_scenic_regulon_plots(project_path, regulon,
+                           plot_format = plot_format, report = report)
 }
 
 

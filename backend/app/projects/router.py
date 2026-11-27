@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from app.auth.deps import get_current_user
 from fastapi.responses import FileResponse
 from app.config import get_settings
-from app.db.models import Project, User, get_db
+from app.db.models import Pipeline, Project, Task, User, get_db
 from app.utils.storage_paths import (
     cleanup_empty_user_dir,
     ensure_user_root,
@@ -237,10 +237,24 @@ async def download_project(
         "annotate": "3_Cell_Annotation",
         "enrich": "5_Pathway_Enrichment", "monocle": "6_Trajectory",
         "cellchat": "7_CellChat", "infercnv": "9_inferCNV",
-        "wgcna": "8_WGCNA", "scenic": "10_SCENIC", "subset": "2_DimRed_Cluster",
+        "wgcna": "8_WGCNA", "scenic": "10_SCENIC", "scenic_regulon": "10_SCENIC",
+        "subset": "2_DimRed_Cluster",
     }
     _ts_re = _re.compile(r"_\d{14}_")
     _steps = set(STEP_DIR.keys())
+
+    # quick/子任务步骤归档到其所属主步骤，避免导出时误判为独立分析。
+    _step_alias = {
+        "marker": "markers", "plot_markers": "markers", "markers_pairwise": "markers",
+        "marker_expr": "markers", "subset_cluster": "subset",
+        "cellchat_pathway": "cellchat", "scenic_regulon": "scenic",
+        "merge_celltypes": "annotate",
+    }
+
+    def _canon_step(step: str | None) -> str | None:
+        if step is None:
+            return None
+        return _step_alias.get(step, step)
 
     def _get_step(fn):
         base = fn.rsplit(".", 1)[0]
@@ -249,7 +263,7 @@ async def download_project(
             return s if s in _steps else None
         for p in base.split("_"):
             if p in _steps:
-                return p
+                return _canon_step(p)
         return None
 
     def _clean_name(fn):
@@ -260,6 +274,42 @@ async def download_project(
             os.unlink(path)
         except OSError:
             pass
+
+    # 当前分析结果 = 最近一条有完成步骤的 Pipeline + 其后单独重跑的步骤。
+    # 不直接使用“最新 Pipeline 创建时间”，避免失败/取消的新建 Pipeline 误删既有有效结果。
+    current_steps: set[str] = set()
+    run_started_at = None
+    recent_pipelines = (
+        db.query(Pipeline)
+        .filter(Pipeline.project_id == project.id)
+        .order_by(Pipeline.created_at.desc())
+        .limit(20)
+        .all()
+    )
+    for pipeline in recent_pipelines:
+        completed = (
+            db.query(Task.step)
+            .filter(Task.pipeline_id == pipeline.id, Task.status == "completed")
+            .all()
+        )
+        steps = {_canon_step(row[0]) for row in completed if row[0]}
+        if steps:
+            current_steps = steps
+            run_started_at = pipeline.started_at or pipeline.created_at
+            break
+
+    standalone_query = db.query(Task.step).filter(
+        Task.project_id == project.id,
+        Task.status == "completed",
+    )
+    if run_started_at is not None:
+        standalone_query = standalone_query.filter(
+            Task.pipeline_id.is_(None), Task.created_at >= run_started_at
+        )
+    for row in standalone_query.all():
+        canon = _canon_step(row[0])
+        if canon:
+            current_steps.add(canon)
 
     # (step, clean_name) -> (mtime, file_path)
     file_map = {}
@@ -276,6 +326,11 @@ async def download_project(
             key = (step, clean)
             fp = os.path.join(root, f)
             mt = os.path.getmtime(fp)
+            rel = os.path.relpath(fp, project_dir)
+            is_uploaded = rel.startswith("_uploaded" + os.sep)
+            if (current_steps and step in _steps
+                    and step not in current_steps and not is_uploaded):
+                continue
             if key not in file_map or mt > file_map[key][0]:
                 file_map[key] = (mt, fp)
 

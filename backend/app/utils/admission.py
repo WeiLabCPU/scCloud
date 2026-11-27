@@ -289,7 +289,7 @@ async def current_reserved_gb(r) -> float:
 
 async def precheck(step: str, project_path: str | None, settings) -> tuple[bool, int, str]:
     """提交时建议性预检(不预约, 仅快速失败给前端弹窗)。返回 (ok, http_code, msg)。"""
-    if step in ("plot_markers", "cellchat_pathway"):  # quick 步骤不走预算
+    if step in ("plot_markers", "cellchat_pathway", "scenic_regulon"):  # quick 步骤不走预算
         return True, 0, ""
     weight = estimate_weight_gb(step, project_path)
     if weight > settings.worker_mem_cap_gb:

@@ -272,10 +272,12 @@ function getToken(): string {
   return getAuthToken() || "";
 }
 
-/** 获取任务结果 JSON — 使用 apiFetch 自动处理 401 token 续期 */
+/** 获取任务结果 JSON — 与 QC 标签页一致，走 authedFetch（自带 401 续期/游客兜底） */
 async function fetchTaskResult(taskId: string, signal?: AbortSignal): Promise<Record<string, unknown> | null> {
   try {
-    return await apiFetch<Record<string, unknown>>(`/api/tasks/${taskId}/result`, signal ? { signal } : undefined);
+    const res = await authedFetch(`/api/tasks/${taskId}/result`, signal ? { signal } : undefined);
+    if (!res.ok) return null;
+    return (await res.json()) as Record<string, unknown>;
   } catch {
     return null;
   }
@@ -559,6 +561,11 @@ function NormalizeResult({ data, taskId }: { data: Record<string, unknown>; task
       )}
     </div>
   );
+}
+
+/** 清理聚类结果文件名：去掉 .rds 与 _harmony 后缀，保留 cluster 与 R 归档时间戳 */
+function cleanClusterBase(raw: string): string {
+  return raw.replace(/\.rds$/i, "").replace(/_harmony$/i, "");
 }
 
 /** 降维结果 — deck.gl 交互式散点图（主），R PNG 可下载 */
@@ -861,10 +868,8 @@ function ClusterResult({ data, task }: { data: Record<string, unknown> | null; t
                 const rows = clusterNum.map((r) => cols.map((k) => escapeCsvCell((r as Record<string, unknown>)[k])).join(","));
                 const csv = "\uFEFF" + [hdr, ...rows].join("\n");
                 const rp = data?.result_path;
-                const now2 = new Date();
-                const ts2 = `${now2.getFullYear()}${String(now2.getMonth()+1).padStart(2,"0")}${String(now2.getDate()).padStart(2,"0")}`;
-                const baseName = (typeof rp === "string" ? rp.split("/").pop()?.replace(/\.rds$/, "") : "") || "cluster";
-                const name = `${baseName}_cluster_num_${ts2}.csv`;
+                const baseName = cleanClusterBase(typeof rp === "string" ? rp.split("/").pop() ?? "" : "");
+                const name = `${baseName}_cluster_num.csv`;
                 const blob = new Blob([csv], {type: "text/csv;charset=utf-8"});
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement("a");
@@ -894,10 +899,8 @@ function ClusterResult({ data, task }: { data: Record<string, unknown> | null; t
                 const rows = freqTable.map((r) => cols.map((k) => escapeCsvCell((r as Record<string, unknown>)[k])).join(","));
                 const csv = "\uFEFF" + [hdr, ...rows].join("\n");
                 const rp = data?.result_path;
-                const now3 = new Date();
-                const ts3 = `${now3.getFullYear()}${String(now3.getMonth()+1).padStart(2,"0")}${String(now3.getDate()).padStart(2,"0")}`;
-                const baseName2 = (typeof rp === "string" ? rp.split("/").pop()?.replace(/\.rds$/, "") : "") || "cluster";
-                const name = `${baseName2}_freq_table_${ts3}.csv`;
+                const baseName2 = cleanClusterBase(typeof rp === "string" ? rp.split("/").pop() ?? "" : "");
+                const name = `${baseName2}_freq_table.csv`;
                 const blob = new Blob([csv], {type: "text/csv;charset=utf-8"});
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement("a");
@@ -1780,8 +1783,9 @@ function MarkersResult({ task, data, taskCache, clusterLevels: parentClusterLeve
                    const vRaw: string | string[] | undefined = pps?.[cl]?.vln;
                    const fp = Array.isArray(fRaw) ? fRaw[0] : fRaw;
                    const vp = Array.isArray(vRaw) ? vRaw[0] : vRaw;
-                   const downloadFeatureName = (typeof fp === 'string' ? fp.split('/').pop()! : `plot_markers_feature_${cl}.${fmt}`);
-                   const downloadVlnName = (typeof vp === 'string' ? vp.split('/').pop()! : `plot_markers_vln_${cl}.${fmt}`);
+                   const stripPlotTag = (name: string) => name.replace(/plot_markers_/g, "markers_");
+                   const downloadFeatureName = stripPlotTag(typeof fp === 'string' ? fp.split('/').pop()! : `plot_markers_feature_${cl}.${fmt}`);
+                   const downloadVlnName = stripPlotTag(typeof vp === 'string' ? vp.split('/').pop()! : `plot_markers_vln_${cl}.${fmt}`);
                    
                    return (
                    <div key={cl} className="mb-6">
@@ -2011,7 +2015,10 @@ function MarkersResult({ task, data, taskCache, clusterLevels: parentClusterLeve
                     const actualCsvName = tab4Task?.result_path
                       ? tab4Task.result_path.split('/').pop()!
                       : `markers_pairwise_${g1Label}_vs_${g2Label}.csv`;
-                    const downloadCsvName = actualCsvName;
+                    const downloadCsvName = actualCsvName.replace(
+                      /_markers_pairwise_(\d{14})_/,
+                      "_markers_$1_pairwise_"
+                    );
 
                     return (
                       <AuthDownloadLink 
@@ -2481,7 +2488,7 @@ function WGCNAResult({ data, taskId }: { data: Record<string, unknown> | null; t
             <div key={name} className="flex items-center justify-between px-3 py-2.5 rounded-lg border" style={{ borderColor: 'var(--clr-border)', background: 'var(--clr-bg-alt)' }}>
               <div className="flex items-center gap-2 min-w-0">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ color: 'var(--clr-text-faint)', flexShrink: 0 }}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-                <span className="text-xs truncate" style={{ color: 'var(--clr-text)' }}>{getFileName(name)}</span>
+                <span className="text-xs truncate" style={{ color: 'var(--clr-text)' }}>{getFileName(name).replace(/^.*?_wgcna_\d{14}_/, '')}</span>
                 <span className="text-[11px] shrink-0" style={{ color: 'var(--clr-text-faint)' }}>{name.endsWith('.rds') ? 'RDS' : name.endsWith('.csv') ? 'CSV' : ''}</span>
               </div>
               <AuthDownloadLink
@@ -2574,9 +2581,33 @@ function GenericStepResult({ data, stepId, taskId, task }: { data: Record<string
   const [pwTaskId, setPwTaskId] = useState<string | null>(hasInitialPw ? (taskId ?? null) : null);
   const [pwName, setPwName] = useState<string>(hasInitialPw ? (pathways[0] ?? "") : "");
   const [pwPlots, setPwPlots] = useState<Record<string, string> | null>(hasInitialPw ? initialPwPlots : null);
+  const scenicData = data.scenic_data as Record<string, unknown> | undefined;
+  const rawRegulons = scenicData?.regulons ?? data.regulons ?? data.top_regulons;
+  const regulonOptions: string[] = Array.from(new Set(
+    (Array.isArray(rawRegulons) ? rawRegulons : rawRegulons ? [rawRegulons] : [])
+      .map(v => (Array.isArray(v) ? v[0] : v))
+      .map(String)
+      .filter(Boolean)
+  ));
+  const [scenicRegSel, setScenicRegSel] = useState<string>(regulonOptions[0] ?? "");
+  const [scenicLoading, setScenicLoading] = useState(false);
+  const [scenicError, setScenicError] = useState<string | null>(null);
+  const [scenicPlots, setScenicPlots] = useState<Record<string, string> | null>(null);
+  const [scenicHeatSel, setScenicHeatSel] = useState<string[]>(regulonOptions.slice(0, 5));
+  const [scenicHeatOpen, setScenicHeatOpen] = useState(false);
+  const [scenicHeatLoading, setScenicHeatLoading] = useState(false);
+  const [scenicHeatError, setScenicHeatError] = useState<string | null>(null);
+  const scenicRequestRef = useRef<AbortController | null>(null);
+  useEffect(() => () => scenicRequestRef.current?.abort(), []);
+  const effectivePlotPaths = plotPaths
+    ? {
+        ...plotPaths,
+        ...(stepId === "scenic" ? (scenicPlots || {}) : {}),
+      }
+    : undefined;
   // cellchat 主网格排除通路特异图（避免与上方下拉面板重复）；其它步骤不变
-  const mainPlotEntries = plotPaths
-    ? Object.entries(plotPaths).filter(([k]) => !(stepId === "cellchat" && pathways.length > 0 && isPwSpecificKey(k)))
+  const mainPlotEntries = effectivePlotPaths
+    ? Object.entries(effectivePlotPaths).filter(([k]) => !(stepId === "cellchat" && pathways.length > 0 && isPwSpecificKey(k)))
     : [];
 
   const runPathway = async () => {
@@ -2625,8 +2656,146 @@ function GenericStepResult({ data, stepId, taskId, task }: { data: Record<string
     }
   };
 
+  const runScenicRegulon = async (regulon: string) => {
+    if (!regulon || !task) return;
+    scenicRequestRef.current?.abort();
+    const controller = new AbortController();
+    scenicRequestRef.current = controller;
+    setScenicLoading(true);
+    setScenicError(null);
+    try {
+      const res = await authedFetch("/api/tasks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
+        body: JSON.stringify({
+          project_id: task.project_id,
+          step: "scenic_regulon",
+          params: { ...(task.params || {}), regulon },
+        }),
+      });
+      const t = await res.json();
+      if (!res.ok) {
+        const d = (t as { detail?: unknown })?.detail;
+        const msg = typeof d === "string" ? d
+          : Array.isArray(d) ? d.map((x) => (x && typeof x === "object" && "msg" in x ? (x as { msg: string }).msg : JSON.stringify(x))).join("; ")
+          : d ? JSON.stringify(d) : "提交失败";
+        throw new Error(msg);
+      }
+      const poll = async (id: string): Promise<Record<string, unknown>> => {
+        if (controller.signal.aborted) throw new DOMException("Aborted", "AbortError");
+        const r = await authedFetch(`/api/tasks/${id}`, { signal: controller.signal });
+        const fresh = await r.json();
+        if (fresh.status === "failed") throw new Error(fresh.error_msg || "任务失败");
+        if (fresh.status === "completed") return fresh;
+        await new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(resolve, 1500);
+          controller.signal.addEventListener("abort", () => {
+            clearTimeout(timer);
+            reject(new DOMException("Aborted", "AbortError"));
+          }, { once: true });
+        });
+        return poll(id);
+      };
+      await poll(t.id);
+      const rRes = await authedFetch(`/api/tasks/${t.id}/result`, { signal: controller.signal });
+      const final = await rRes.json();
+      if (!rRes.ok) throw new Error(final?.detail ? String(final.detail) : "结果读取失败");
+      const rawpp = final.plot_paths as Record<string, unknown> | undefined;
+      const pp = rawpp
+        ? Object.fromEntries(Object.entries(rawpp).map(([k, v]) => [k, unwrapStr(v)]).filter(([, v]) => !!v))
+        : {};
+      if (Object.keys(pp).length === 0) throw new Error("未生成 regulon 图表");
+      setScenicPlots(prev => ({ ...(prev || {}), ...(pp as Record<string, string>) }));
+    } catch (e) {
+      if (!controller.signal.aborted) setScenicError(e instanceof Error ? e.message : String(e));
+    } finally {
+      if (!controller.signal.aborted) setScenicLoading(false);
+    }
+  };
+
+  const runScenicHeatmap = async () => {
+    if (scenicHeatSel.length === 0 || !task) return;
+    scenicRequestRef.current?.abort();
+    const controller = new AbortController();
+    scenicRequestRef.current = controller;
+    setScenicHeatLoading(true);
+    setScenicHeatError(null);
+    try {
+      const res = await authedFetch("/api/tasks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
+        body: JSON.stringify({
+          project_id: task.project_id,
+          step: "scenic_regulon",
+          params: { ...(task.params || {}), regulons: scenicHeatSel },
+        }),
+      });
+      const t = await res.json();
+      if (!res.ok) {
+        const d = (t as { detail?: unknown })?.detail;
+        const msg = typeof d === "string" ? d
+          : Array.isArray(d) ? d.map((x) => (x && typeof x === "object" && "msg" in x ? (x as { msg: string }).msg : JSON.stringify(x))).join("; ")
+          : d ? JSON.stringify(d) : "提交失败";
+        throw new Error(msg);
+      }
+      const poll = async (id: string): Promise<Record<string, unknown>> => {
+        if (controller.signal.aborted) throw new DOMException("Aborted", "AbortError");
+        const r = await authedFetch(`/api/tasks/${id}`, { signal: controller.signal });
+        const fresh = await r.json();
+        if (fresh.status === "failed") throw new Error(fresh.error_msg || "任务失败");
+        if (fresh.status === "completed") return fresh;
+        await new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(resolve, 1500);
+          controller.signal.addEventListener("abort", () => {
+            clearTimeout(timer);
+            reject(new DOMException("Aborted", "AbortError"));
+          }, { once: true });
+        });
+        return poll(id);
+      };
+      await poll(t.id);
+      const rRes = await authedFetch(`/api/tasks/${t.id}/result`, { signal: controller.signal });
+      const final = await rRes.json();
+      if (!rRes.ok) throw new Error(final?.detail ? String(final.detail) : "结果读取失败");
+      const rawpp = final.plot_paths as Record<string, unknown> | undefined;
+      const pp = rawpp
+        ? Object.fromEntries(Object.entries(rawpp).map(([k, v]) => [k, unwrapStr(v)]).filter(([, v]) => !!v))
+        : {};
+      if (!pp.regulon_heatmap) throw new Error("未生成 regulon 热图");
+      setScenicPlots(prev => ({ ...(prev || {}), ...(pp as Record<string, string>) }));
+      setScenicHeatOpen(false);
+    } catch (e) {
+      if (!controller.signal.aborted) setScenicHeatError(e instanceof Error ? e.message : String(e));
+    } finally {
+      if (!controller.signal.aborted) setScenicHeatLoading(false);
+    }
+  };
+
   // 提取文件名
   const getFileName = (path: string) => path.split("/").pop() || path;
+  const formatPlotLabel = (name: string) => {
+    if (stepId === "scenic" && (name === "regulon_umap" || name === "regulon_vln" || name === "regulon_violin") && scenicRegSel) {
+      return `${name === "regulon_umap" ? "Regulon UMAP" : "Regulon 表达"} — ${scenicRegSel}`;
+    }
+    if (stepId === "scenic" && name === "regulon_heatmap") {
+      return `Regulon 热图 — ${scenicHeatSel.length} 个`;
+    }
+    if (stepId === "scenic" && name === "regulon_bar") {
+      return `Regulon 柱状图 — ${scenicHeatSel.length} 个`;
+    }
+    return name.replace(/_/g, " ");
+  };
+  const getDisplayFileName = (path: string) => {
+    const fileName = getFileName(path);
+    const extMatch = fileName.match(/\.[^.]+$/);
+    if (!extMatch) return fileName;
+    const ext = extMatch[0];
+    const base = fileName.slice(0, -ext.length);
+    const redundantSuffix = new RegExp(`_${ext.slice(1)}$`, "i");
+    return redundantSuffix.test(base) ? `${base.replace(redundantSuffix, "")}${ext}` : fileName;
+  };
 
   // 构建下载 URL
   const getDownloadUrl = (filePath: string) => {
@@ -2708,6 +2877,89 @@ function GenericStepResult({ data, stepId, taskId, task }: { data: Record<string
         </div>
       )}
 
+      {stepId === "scenic" && regulonOptions.length > 0 && (
+        <div className="rounded-lg border p-3 space-y-2" style={{ borderColor: "var(--clr-border)", background: "var(--clr-bg-alt)" }}>
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-xs font-semibold" style={{ color: "var(--clr-text)" }}>感兴趣 Regulon</span>
+            <select
+              value={scenicRegSel}
+              onChange={e => {
+                const value = e.target.value;
+                setScenicRegSel(value);
+                void runScenicRegulon(value);
+              }}
+              disabled={scenicLoading}
+              className="text-xs px-2 py-1.5 rounded border"
+              style={{ borderColor: "var(--clr-border)", background: "var(--clr-bg-card)", color: "var(--clr-text)", minWidth: 220 }}
+            >
+              {regulonOptions.map(reg => <option key={reg} value={reg}>{reg}</option>)}
+            </select>
+            <span className="text-[10px]" style={{ color: "var(--clr-text-faint)" }}>
+              {scenicLoading ? "图表生成中…" : `共 ${regulonOptions.length} 个`}
+            </span>
+          </div>
+          {scenicError && <div className="text-xs" style={{ color: "#D24B40" }}>出错：{scenicError}</div>}
+          <p className="text-[10px]" style={{ color: "var(--clr-text-faint)" }}>
+            默认显示活性方差最高的 Regulon；切换后自动重绘 UMAP 和小提琴图。
+          </p>
+        </div>
+      )}
+
+      {stepId === "scenic" && regulonOptions.length > 0 && (
+        <div className="rounded-lg border p-3 space-y-2" style={{ borderColor: "var(--clr-border)", background: "var(--clr-bg-alt)" }}>
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-xs font-semibold" style={{ color: "var(--clr-text)" }}>热图 Regulons</span>
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setScenicHeatOpen(v => !v)}
+                className="text-xs px-2 py-1.5 rounded border inline-flex items-center gap-2"
+                style={{ borderColor: "var(--clr-border)", background: "var(--clr-bg-card)", color: "var(--clr-text)", minWidth: 220 }}
+              >
+                <span>已选 {scenicHeatSel.length} / {regulonOptions.length} 个</span>
+                <span style={{ color: "var(--clr-text-faint)" }}>▾</span>
+              </button>
+              {scenicHeatOpen && (
+                <div
+                  className="absolute left-0 mt-1 rounded border shadow-lg p-2 space-y-1"
+                  style={{ zIndex: 30, background: "var(--clr-bg-card)", borderColor: "var(--clr-border)", minWidth: 240, maxHeight: 280, overflowY: "auto" }}
+                >
+                  {regulonOptions.map(reg => (
+                    <label key={reg} className="flex items-center gap-2 text-xs px-1 py-1 rounded cursor-pointer hover:bg-black/5" style={{ color: "var(--clr-text)" }}>
+                      <input
+                        type="checkbox"
+                        checked={scenicHeatSel.includes(reg)}
+                        onChange={e => {
+                          setScenicHeatSel(prev => e.target.checked ? [...prev, reg] : prev.filter(x => x !== reg));
+                        }}
+                        className="accent-[#C86019]"
+                      />
+                      <span>{reg}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => void runScenicHeatmap()}
+              disabled={scenicHeatLoading || scenicHeatSel.length === 0}
+              className="text-xs px-3 py-1.5 rounded font-medium transition-all disabled:opacity-50"
+              style={{ background: "var(--clr-amber)", color: "white", cursor: scenicHeatLoading ? "default" : "pointer" }}
+            >
+              {scenicHeatLoading ? "生成中…" : "更新热图"}
+            </button>
+            <span className="text-[10px]" style={{ color: "var(--clr-text-faint)" }}>
+              默认 top1–5
+            </span>
+          </div>
+          {scenicHeatError && <div className="text-xs" style={{ color: "#D24B40" }}>出错：{scenicHeatError}</div>}
+          <p className="text-[10px]" style={{ color: "var(--clr-text-faint)" }}>
+            当前选择：{scenicHeatSel.length > 0 ? scenicHeatSel.join('、') : "未选择"}
+          </p>
+        </div>
+      )}
+
       {/* Tab 切换 */}
       <div className="flex gap-1 p-0.5 rounded" style={{ background: "var(--clr-bg-alt)" }}>
         {(["plots", "data"] as const).map(tab => (
@@ -2731,7 +2983,7 @@ function GenericStepResult({ data, stepId, taskId, task }: { data: Record<string
           {mainPlotEntries.map(([name, path]) => (
             <div key={name} className="rounded-lg border overflow-hidden" style={{ borderColor: "var(--clr-border)" }}>
               <div className="px-3 py-2 flex items-center justify-between" style={{ background: "var(--clr-bg-alt)", borderBottom: "1px solid var(--clr-border)" }}>
-                <span className="text-xs font-medium" style={{ color: "var(--clr-text)" }}>{name.replace(/_/g, " ")}</span>
+                <span className="text-xs font-medium" style={{ color: "var(--clr-text)" }}>{formatPlotLabel(name)}</span>
                 <AuthDownloadLink
                   url={getDownloadUrl(path)}
                   filename={getFileName(path)}
@@ -2769,12 +3021,12 @@ function GenericStepResult({ data, stepId, taskId, task }: { data: Record<string
             >
               <div className="flex items-center gap-2">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--clr-text-muted)" strokeWidth="2" strokeLinecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-                <span className="text-xs" style={{ color: "var(--clr-text)" }}>{name.replace(/_/g, " ")}</span>
-                <span className="text-[11px]" style={{ color: "var(--clr-text-faint)", fontFamily: "var(--font-mono)" }}>{getFileName(path)}</span>
+                <span className="text-xs" style={{ color: "var(--clr-text)" }}>{name.replace(/_(rds|csv|tsv|txt|xlsx?|h5ad|h5seurat|loom)$/i, "").replace(/_/g, " ")}</span>
+                <span className="text-[11px]" style={{ color: "var(--clr-text-faint)", fontFamily: "var(--font-mono)" }}>{getDisplayFileName(path)}</span>
               </div>
               <AuthDownloadLink
                 url={getDownloadUrl(path)}
-                filename={getFileName(path)}
+                filename={getDisplayFileName(path)}
                 className="inline-flex items-center justify-center w-7 h-7 rounded transition-all hover:scale-110"
                 style={{ color: "var(--clr-amber)" }}
               >
