@@ -3,8 +3,8 @@ name: Build and Publish Docker Images
 # main 推送（仅相关 paths）/ GitHub Release 发布 / 手动触发：
 #   构建 frontend + backend 并推 GHCR。
 # r-engine 依赖 gitignore 的 r-library，本仓库 CI 不构建；在 GPU 本机构建后：
-#   docker tag <local> ghcr.io/zyzhou-saffron/sccloud-r-engine:latest
-#   docker push ghcr.io/zyzhou-saffron/sccloud-r-engine:latest
+#   docker tag <local> ghcr.io/weilabcpu/sccloud-r-engine:latest
+#   docker push ghcr.io/weilabcpu/sccloud-r-engine:latest
 #
 # 平台：
 #   - frontend: linux/amd64 only
@@ -54,7 +54,8 @@ permissions:
   pull-requests: read
 
 env:
-  GHCR_OWNER: zyzhou-saffron
+  # OCI 镜像仓库命名空间必须全小写（不能直接写含大写的 WeiLabCPU）
+  GHCR_OWNER: weilabcpu
 
 jobs:
   changes:
@@ -195,7 +196,7 @@ jobs:
           SHA="${GITHUB_SHA::7}"
           echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
 
-          OWNER="${{ env.GHCR_OWNER }}"
+          OWNER=$(printf '%s' "${{ env.GHCR_OWNER }}" | tr '[:upper:]' '[:lower:]')
           IMG="${{ matrix.image }}"
           BASE="ghcr.io/${OWNER}/${IMG}"
 
@@ -228,6 +229,8 @@ jobs:
           push: true
           build-args: ${{ matrix.build-args }}
           tags: ${{ steps.tags.outputs.list }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
           cache-from: type=gha,scope=${{ matrix.component }}
           cache-to: type=gha,mode=max,scope=${{ matrix.component }}
           provenance: false
@@ -236,7 +239,8 @@ jobs:
         if: ${{ steps.skip.outputs.run == 'true' && vars.ALIYUN_ACR_REGISTRY != '' && env.ACR_PASSWORD != '' }}
         run: |
           set -e
-          SRC="ghcr.io/${GHCR_OWNER}/${{ matrix.image }}:latest"
+          OWNER=$(printf '%s' "${GHCR_OWNER}" | tr '[:upper:]' '[:lower:]')
+          SRC="ghcr.io/${OWNER}/${{ matrix.image }}:latest"
           ACR_BASE="${{ vars.ALIYUN_ACR_REGISTRY }}/${{ vars.ALIYUN_ACR_NAMESPACE }}/${{ matrix.image }}"
           extra=(-t "${ACR_BASE}:latest" -t "${ACR_BASE}:${{ steps.tags.outputs.sha }}")
           VER="${{ needs.changes.outputs.version }}"
