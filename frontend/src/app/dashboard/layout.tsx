@@ -37,7 +37,23 @@ export default function DashboardLayout({
   const [upgradeOpen, setUpgradeOpen] = useState(false);
   const [authOpen, setAuthOpen] = useState(false);
   const [userDropdownOpen, setUserDropdownOpen] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [navItems, setNavItems] = useState(NAV_ITEMS);
+
+  useEffect(() => {
+    setMobileNavOpen(false);
+  }, [pathname]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setMobileNavOpen(false);
+        setUserDropdownOpen(false);
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, []);
 
   useEffect(() => {
     // 标签页已登出：跳回首页，不清 localStorage（其它标签页不受影响）
@@ -149,7 +165,28 @@ export default function DashboardLayout({
           </nav>
 
           {/* User area */}
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3 sm:gap-4">
+            {/* Mobile nav toggle */}
+            <button
+              type="button"
+              onClick={() => setMobileNavOpen((prev) => !prev)}
+              aria-label="切换导航菜单"
+              aria-expanded={mobileNavOpen}
+              className="md:hidden p-1.5 rounded text-white/80 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
+            >
+              {mobileNavOpen ? (
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <path d="M18 6 6 18M6 6l12 12" />
+                </svg>
+              ) : (
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <line x1="4" y1="6" x2="20" y2="6" />
+                  <line x1="4" y1="12" x2="20" y2="12" />
+                  <line x1="4" y1="18" x2="20" y2="18" />
+                </svg>
+              )}
+            </button>
+
             {/* Repository Link */}
             <div className="flex items-center gap-3 text-white/70 mr-1">
               <a
@@ -198,16 +235,16 @@ export default function DashboardLayout({
                   >
                     <div className="px-3 py-2 border-b" style={{ borderColor: "var(--clr-border)" }}>
                       <p className="text-sm font-medium" style={{ color: "var(--clr-text)" }}>{username}</p>
-                      <p className="text-[10px] mt-0.5" style={{ color: "var(--clr-text-faint)" }}>
+                      <p className="text-[11px] mt-0.5" style={{ color: "var(--clr-text-faint)" }}>
                         {ROLE_LABELS[userRole || getAuthItem("role") || "user"] || "用户"}
                       </p>
                       {quotaInfo.total > 0 && (
-                        <p className="text-[10px] mt-0.5" style={{ color: "var(--clr-amber-dark)" }}>
+                        <p className="text-[11px] mt-0.5" style={{ color: "var(--clr-amber-dark)" }}>
                           剩余操作: {Math.max(0, quotaInfo.total - quotaInfo.used)} / {quotaInfo.total} 次
                         </p>
                       )}
                       {retentionDays > 0 && (
-                        <p className="text-[10px] mt-0.5" style={{ color: "var(--clr-text-faint)" }}>
+                        <p className="text-[11px] mt-0.5" style={{ color: "var(--clr-text-faint)" }}>
                           数据保留: {retentionDays} 天
                         </p>
                       )}
@@ -251,6 +288,41 @@ export default function DashboardLayout({
               </div>
           </div>
         </div>
+
+        {/* Mobile navigation drawer */}
+        {mobileNavOpen && (
+          <nav
+            className="md:hidden px-4 pb-3 pt-2 space-y-1"
+            style={{ borderTop: "1px solid rgba(255,255,255,0.1)", background: "var(--clr-dark)" }}
+          >
+            {navItems.map((item) => {
+              const active = pathname === item.href || pathname?.startsWith(item.href);
+              const isSettings = item.href === "/dashboard/settings";
+              const handleClick = (e: React.MouseEvent) => {
+                setMobileNavOpen(false);
+                if (guest && isSettings) {
+                  e.preventDefault();
+                  setAuthOpen(true);
+                }
+              };
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  onClick={handleClick}
+                  className={`flex items-center gap-2 px-3 py-2 rounded text-sm font-medium transition-colors ${
+                    active
+                      ? "text-[#FFD42A] bg-white/10"
+                      : "text-white/75 hover:text-white hover:bg-white/5"
+                  }`}
+                >
+                  <item.Icon size={15} />
+                  {item.label}
+                </Link>
+              );
+            })}
+          </nav>
+        )}
       </header>
 
       {/* Guest banner */}

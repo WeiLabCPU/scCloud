@@ -168,7 +168,7 @@ export default function ImageLightbox({
           <p className="text-xs font-medium truncate" title={alt}>
             {alt}
           </p>
-          <p className="text-[10px] text-stone-400">
+          <p className="text-[11px] text-stone-400">
             滚轮缩放 · 拖拽平移 · 双击切换 1:1 / 2:1 · Esc 关闭
           </p>
         </div>

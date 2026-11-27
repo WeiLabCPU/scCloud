@@ -13,11 +13,6 @@ const BACKEND = process.env.BACKEND_URL || "http://localhost:8000";
 
 const nextConfig: NextConfig = {
   output: "standalone",
-  typescript: {
-    // @types/react-plotly.js 的 ColorScale 类型定义与 plotly.js 不兼容
-    // 代码运行时完全正常，仅类型声明过时
-    ignoreBuildErrors: true,
-  },
   /**
    * API 代理规则 — 前后端同源路由
    *

@@ -115,6 +115,7 @@ export default function PipelineForm({ projectId, projectSpecies, token, onSubmi
     }));
   }, [projectId, projectSpecies]);
   const historyRef = useRef<HTMLDivElement>(null);
+  const addTriggerRef = useRef<HTMLSpanElement | null>(null);
   const [showAddSample, setShowAddSample] = useState(false);
   const [annoFile, setAnnoFile] = useState<{ name: string; data: { Cluster: string; CellType: string; Markers: string }[] } | null>(null);
 
@@ -317,7 +318,7 @@ export default function PipelineForm({ projectId, projectSpecies, token, onSubmi
             {/* 标题栏 */}
             <div className="flex items-center justify-between px-3 py-2.5" style={{ borderBottom: "1px solid var(--clr-border)", background: "var(--clr-bg-alt)" }}>
               <span className="text-xs font-semibold" style={{ fontFamily: "var(--font-serif)", color: "var(--clr-dark)" }}>历史流程</span>
-              <span className="text-[10px]" style={{ color: "var(--clr-text-faint)" }}>{pipelines.length}/10</span>
+              <span className="text-[11px]" style={{ color: "var(--clr-text-faint)" }}>{pipelines.length}/10</span>
             </div>
 
             {/* 列表 */}
@@ -343,11 +344,11 @@ export default function PipelineForm({ projectId, projectSpecies, token, onSubmi
                         <div className="text-xs font-medium truncate" style={{ color: "var(--clr-text)" }}>
                           {p.status === "completed" ? "全流程完成" : p.status === "running" ? `运行中 — ${stepLabel}` : p.status === "failed" ? `失败 — ${p.error_step ? STEP_LABELS[p.error_step] || p.error_step : ""}` : "等待中"}
                         </div>
-                        <div className="text-[10px] mt-0.5" style={{ color: "var(--clr-text-faint)", fontFamily: "var(--font-mono)" }}>
+                        <div className="text-[11px] mt-0.5" style={{ color: "var(--clr-text-faint)", fontFamily: "var(--font-mono)" }}>
                           {new Date((p.created_at || "") + (!(p.created_at || "").endsWith("Z") ? "Z" : "")).toLocaleString("zh-CN")}
                         </div>
                       </div>
-                      <span className={`text-[10px] font-mono shrink-0 ${style.text}`}>
+                      <span className={`text-[11px] font-mono shrink-0 ${style.text}`}>
                         {p.status === "completed" ? "✓" : p.status === "failed" ? "✗" : p.status === "running" ? `${p.current_step ? getStepIndex(p.current_step, p.params) : 0}/${getTotalSteps(p.params)}` : "—"}
                       </span>
                     </button>
@@ -357,7 +358,7 @@ export default function PipelineForm({ projectId, projectSpecies, token, onSubmi
             </div>
 
             {pipelines.length > 0 && (
-              <div className="px-3 py-1.5 text-[10px] text-center" style={{ borderTop: "1px solid var(--clr-border)", background: "var(--clr-bg-alt)", color: "var(--clr-text-faint)" }}>
+              <div className="px-3 py-1.5 text-[11px] text-center" style={{ borderTop: "1px solid var(--clr-border)", background: "var(--clr-bg-alt)", color: "var(--clr-text-faint)" }}>
                 共 {pipelines.length} 条记录
               </div>
             )}
@@ -393,12 +394,14 @@ export default function PipelineForm({ projectId, projectSpecies, token, onSubmi
             onUploadedFilesChange(uploadedFiles.filter(f => f.path !== filePath));
           }}
           onAddSample={() => setShowAddSample(true)}
+          addTriggerRef={addTriggerRef}
         />
 
         {/* 添加样本下拉菜单 */}
         <AddSampleDropdown
           isOpen={showAddSample}
           onClose={() => setShowAddSample(false)}
+          triggerRef={addTriggerRef}
           sampleGroups={sampleGroups}
           onFileUploaded={(file) => {
             const exists = uploadedFiles.some(f => f.path === file.path);
@@ -433,7 +436,7 @@ export default function PipelineForm({ projectId, projectSpecies, token, onSubmi
           </svg>
           下载示例数据
         </a>
-        <span className="text-[10px]" style={{ color: "var(--clr-text-faint)" }}>约 3.4 MB</span>
+        <span className="text-[11px]" style={{ color: "var(--clr-text-faint)" }}>约 3.4 MB</span>
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-3">
@@ -456,7 +459,7 @@ export default function PipelineForm({ projectId, projectSpecies, token, onSubmi
                   </Tooltip>
                 </label>
                 <input type="range" min="0" max="100" value={params.qc.max_mt_ratio as number} onChange={(e) => updateStepParam("qc", "max_mt_ratio", Number(e.target.value))} className="w-full accent-[#C86019]" />
-                <div className="text-[10px] text-right" style={{ color: "var(--clr-text-faint)", fontFamily: "var(--font-mono)" }}>{params.qc.max_mt_ratio as number}%</div>
+                <div className="text-[11px] text-right" style={{ color: "var(--clr-text-faint)", fontFamily: "var(--font-mono)" }}>{params.qc.max_mt_ratio as number}%</div>
               </div>
               <div className="flex flex-wrap gap-x-6 gap-y-3">
                 <div>
@@ -496,7 +499,7 @@ export default function PipelineForm({ projectId, projectSpecies, token, onSubmi
                   <NumberInput value={params.qc.umi_max_pct as number} onChange={(v) => updateStepParam("qc", "umi_max_pct", v)} min={params.qc.umi_min_pct as number} max={1} step={0.01} className={numberCls} style={inputStyle} />
                 </div>
               </div>
-              <p className="text-[10px] mt-1" style={{ color: "var(--clr-text-faint)" }}>
+              <p className="text-[11px] mt-1" style={{ color: "var(--clr-text-faint)" }}>
                 标准化: SCTransform + glmGamPoi
               </p>
             </div>
@@ -613,7 +616,7 @@ export default function PipelineForm({ projectId, projectSpecies, token, onSubmi
                     </Tooltip>
                   </label>
                   <input type="range" min="0" max="2" step="0.01" value={params.cluster.resolution as number} onChange={(e) => updateStepParam("cluster", "resolution", Number(e.target.value))} className="w-full accent-[#C86019]" />
-                  <div className="flex justify-between text-[10px]" style={{ color: "var(--clr-text-faint)", fontFamily: "var(--font-mono)" }}>
+                  <div className="flex justify-between text-[11px]" style={{ color: "var(--clr-text-faint)", fontFamily: "var(--font-mono)" }}>
                     <span>0</span><span style={{ color: "var(--clr-amber)", fontWeight: 600 }}>{params.cluster.resolution as number}</span><span>2</span>
                   </div>
                 </div>
@@ -753,7 +756,7 @@ export default function PipelineForm({ projectId, projectSpecies, token, onSubmi
               )}
             </div>
             <a href="/api/tasks/example-cell-anno" download="example.cellAnno.txt"
-              className="text-[10px] underline" style={{ color: "var(--clr-amber-dark)" }}>
+              className="text-[11px] underline" style={{ color: "var(--clr-amber-dark)" }}>
               下载示例注释文件 (example.cellAnno.txt)
             </a>
           </div>

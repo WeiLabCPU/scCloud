@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { saveAuthData, upgradeGuest, moveGuestToUser } from "../lib/api";
 
@@ -35,6 +35,23 @@ export default function AuthModal({
   const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (open) {
+      setTab(upgradeMode ? "register" : defaultTab);
+    }
+  }, [open, defaultTab, upgradeMode]);
+
+  useEffect(() => {
+    if (!open) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !loading) {
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [open, loading, onClose]);
 
   if (!open) return null;
 

@@ -179,10 +179,26 @@ if [ "${1:-}" = "image" ] && [ "${2:-}" = "inspect" ]; then
   if [ -n "${MOCK_PULL_SUCCEED_ON_PROXY_FILE:-}" ] && [ -f "$MOCK_PULL_SUCCEED_ON_PROXY_FILE" ]; then
     exit 0
   fi
+  if [ -n "${MOCK_DYNAMIC_IMAGES_FILE:-}" ] && [ -f "$MOCK_DYNAMIC_IMAGES_FILE" ] && grep -Fxq -- "$ref" "$MOCK_DYNAMIC_IMAGES_FILE" 2>/dev/null; then
+    exit 0
+  fi
   case " ${MOCK_LOCAL_IMAGES:-} " in
     *" ${ref} "*) exit 0 ;;
     *) exit 1 ;;
   esac
+fi
+
+if [ "${1:-}" = "load" ]; then
+  cat >/dev/null
+  if [ -n "${MOCK_DYNAMIC_IMAGES_FILE:-}" ]; then
+    printf '%s\n' "${MOCK_LOAD_TAG:-ghcr.io/cangiolo/sccloud-r-engine:latest}" >> "$MOCK_DYNAMIC_IMAGES_FILE"
+  fi
+  exit 0
+fi
+
+if [ "${1:-}" = "images" ]; then
+  printf '%s\n' "${MOCK_LOAD_TAG:-ghcr.io/cangiolo/sccloud-r-engine:latest}"
+  exit 0
 fi
 
 if [ "${1:-}" = "ps" ]; then
@@ -193,6 +209,9 @@ if [ "${1:-}" = "ps" ]; then
 fi
 
 if [ "${1:-}" = "tag" ]; then
+  if [ -n "${MOCK_DYNAMIC_IMAGES_FILE:-}" ] && [ -n "${3:-}" ]; then
+    printf '%s\n' "$3" >> "$MOCK_DYNAMIC_IMAGES_FILE"
+  fi
   exit 0
 fi
 
@@ -1051,6 +1070,52 @@ else
   done
 fi
 [ "$ok_u26" = "1" ] && pass "U26: docker-compose*.yml 中所有 CMD 健康检查参数均不含空白字符"
+
+# ---------------- U27: pull 前预加载离线 R 镜像包并跳过远端拉取 r-engine ----------------
+sb=$(setup_sandbox u27)
+dlog="$sb/docker.log"
+dyn_imgs="$sb/dyn_images"
+mkdir -p "$sb/data"
+printf 'dummy-tar' | gzip > "$sb/data/sccloud-r-engine-image.tar.gz"
+light_five="ghcr.io/cangiolo/sccloud-frontend:latest ghcr.io/cangiolo/sccloud-backend:latest nginx:alpine@sha256:db35bfc6b2951e7f8a72db5db120288c127ffaeeb4a6d4b95a26fead017d5913 mariadb:11@sha256:2439dcd7d14010ecd1ff7a4e1c5abe8e208c34fe35290744deeeaac3569043c3 redis:7-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf"
+out=$(
+  cd "$sb" && \
+  env PATH="$sb/fake-bin:$PATH" HOME="$sb/home" \
+    MOCK_DOCKER_LOG="$dlog" \
+    MOCK_LOCAL_IMAGES="$light_five" \
+    MOCK_DYNAMIC_IMAGES_FILE="$dyn_imgs" \
+    MOCK_LOAD_TAG="sccloud-r-engine:latest" \
+    sh ./start.sh 2>&1
+)
+rc=$?
+ok_u27=1
+[ "$rc" -eq 0 ] || { fail "U27" "expected exit 0, got $rc"; ok_u27=0; }
+assert_contains "U27" "$out" "从 data/sccloud-r-engine-image.tar.gz 加载 R 镜像" || ok_u27=0
+assert_contains "U27" "$out" "跳过远端拉取 r-engine" || ok_u27=0
+grep -Eq '^compose .* pull web frontend backend db redis$' "$dlog" 2>/dev/null || { fail "U27" "expected selective pull without r-engine"; ok_u27=0; }
+load_line=$(grep -n '^load$' "$dlog" 2>/dev/null | head -n 1 | cut -d: -f1)
+pull_line=$(grep -n '^compose .* pull' "$dlog" 2>/dev/null | head -n 1 | cut -d: -f1)
+if [ -z "$load_line" ] || [ -z "$pull_line" ] || [ "$load_line" -ge "$pull_line" ]; then
+  fail "U27" "expected docker load before compose pull (load=$load_line pull=$pull_line)"
+  ok_u27=0
+fi
+[ "$ok_u27" = "1" ] && pass "U27: 存在离线 R 镜像包时在 pull 前自动加载并跳过远端拉取 r-engine"
+
+# ---------------- U28: 首次全量拉取前输出体积与断点续传提示 ----------------
+sb=$(setup_sandbox u28)
+out=$(
+  cd "$sb" && \
+  env PATH="$sb/fake-bin:$PATH" HOME="$sb/home" \
+    MOCK_PULL_RC=1 MOCK_LOCAL_IMAGES="" \
+    sh ./start.sh 2>&1
+)
+rc=$?
+ok_u28=1
+[ "$rc" -ne 0 ] || { fail "U28" "expected non-zero exit on pull failure"; ok_u28=0; }
+assert_contains "U28" "$out" "3.6GB" || ok_u28=0
+assert_contains "U28" "$out" "3.15GB" || ok_u28=0
+assert_contains "U28" "$out" "断点续传" || ok_u28=0
+[ "$ok_u28" = "1" ] && pass "U28: 首次全量拉取前明确提示 3.6GB/3.15GB 体积与断点续传说明"
 
 echo ""
 printf 'Summary: %d passed, %d failed\n' "$PASS_COUNT" "$FAIL_COUNT"

@@ -403,7 +403,7 @@ export default function GeneExpressionPopup({
             background: "var(--clr-bg)",
           }}
         >
-          <span style={{ color: "var(--clr-text-faint)", fontSize: 10, whiteSpace: "nowrap" }}>
+          <span style={{ color: "var(--clr-text-faint)", fontSize: 11, whiteSpace: "nowrap" }}>
             {data.min_expr.toFixed(1)}
           </span>
           <div
@@ -414,7 +414,7 @@ export default function GeneExpressionPopup({
               background: `linear-gradient(to right, rgb(220,220,220), rgb(68,1,84), rgb(52,94,141), rgb(33,145,140), rgb(94,201,98), rgb(170,220,50), rgb(253,231,37))`,
             }}
           />
-          <span style={{ color: "var(--clr-text-faint)", fontSize: 10, whiteSpace: "nowrap" }}>
+          <span style={{ color: "var(--clr-text-faint)", fontSize: 11, whiteSpace: "nowrap" }}>
             {data.max_expr.toFixed(1)}
           </span>
         </div>

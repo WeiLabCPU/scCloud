@@ -943,16 +943,39 @@ run_pull_once() {
   PULL_LOG_FILE=$(mktemp "${TMPDIR:-/tmp}/sccloud-pull.XXXXXX")
   PULL_RC_FILE=$(mktemp "${TMPDIR:-/tmp}/sccloud-pull-rc.XXXXXX")
   pull_log="$PULL_LOG_FILE"
-  info "拉取预构建镜像（${COMPOSE_DISPLAY} pull）..."
-  (
-    run_compose pull 2>&1
-    echo $? > "$PULL_RC_FILE"
-  ) | tee "$PULL_LOG_FILE"
+  pull_start=$(now_s)
+  r_img_now=$(get_r_engine_image)
+
+  if [ -f ./data/sccloud-r-engine-image.tar.gz ] && image_exists_locally "$r_img_now"; then
+    info "本地已加载离线 R 镜像包，跳过远端拉取 r-engine（3.15GB），仅拉取其余轻量组件（约 450MB）..."
+    info "拉取轻量组件镜像（${COMPOSE_DISPLAY} pull web frontend backend db redis）..."
+    (
+      run_compose pull web frontend backend db redis 2>&1
+      echo $? > "$PULL_RC_FILE"
+    ) | tee "$PULL_LOG_FILE"
+  else
+    if ! image_exists_locally "$r_img_now"; then
+      info "首次拉取全量镜像约 3.6GB（含 3.15GB R 分析引擎，最大单层 1.49GB）。"
+      if [ "$IS_PODMAN" = "1" ]; then
+        info "提示：直连海外 GHCR 较慢且管道日志不会每秒刷新进度属正常现象；已完成的分层支持断点续传（若有代理可 Ctrl+C 后 export https_proxy=... 重试，或将离线包放入 ./data/sccloud-r-engine-image.tar.gz）。"
+      else
+        info "提示：直连海外 GHCR 较慢且管道日志不会每秒刷新进度属正常现象；已完成的分层支持断点续传（若有代理可 Ctrl+C 后执行 sh ./start.sh --sync-proxy，或将离线包放入 ./data/sccloud-r-engine-image.tar.gz）。"
+      fi
+    fi
+    info "拉取预构建镜像（${COMPOSE_DISPLAY} pull）..."
+    (
+      run_compose pull 2>&1
+      echo $? > "$PULL_RC_FILE"
+    ) | tee "$PULL_LOG_FILE"
+  fi
+
   pull_rc=$(cat "$PULL_RC_FILE" 2>/dev/null || echo 1)
+  pull_end=$(now_s)
   if [ "$pull_rc" = "0" ]; then
     pull_ok=1
+    ok "镜像拉取完成（$(elapsed_str "$pull_start" "$pull_end")）"
   else
-    warn "镜像拉取未全部成功（退出码 ${pull_rc}），检查本地镜像与离线兜底..."
+    warn "镜像拉取未全部成功（退出码 ${pull_rc}，耗时 $(elapsed_str "$pull_start" "$pull_end")），检查本地镜像与离线兜底..."
   fi
 }
 
@@ -1379,6 +1402,9 @@ else
   pull_ok=0
   pull_log=""
   if [ "$DO_PULL" = "1" ]; then
+    if ! image_exists_locally "$(get_r_engine_image)"; then
+      ensure_r_engine_image || true
+    fi
     run_pull_once
     if [ "$pull_ok" != "1" ] && offer_interactive_proxy_sync; then
       info "代理同步完成，自动重试镜像拉取..."

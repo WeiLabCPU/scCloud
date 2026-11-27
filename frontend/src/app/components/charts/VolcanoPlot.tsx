@@ -58,8 +58,7 @@ export default function VolcanoPlot({
   projectName,
   completedAt,
 }: VolcanoPlotProps) {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const plotRef = useRef<any>(null);
+  const graphDivRef = useRef<HTMLElement | null>(null);
 
   const { upGenes, downGenes, nsGenes } = useMemo(() => {
     const up: VolcanoPoint[] = [];
@@ -157,10 +156,11 @@ export default function VolcanoPlot({
   }, [projectName, completedAt, title]);
 
   const handleDownload = useCallback(async () => {
-    const el = plotRef.current?.el;
+    const el = graphDivRef.current;
     if (!el) return;
     try {
-      const Plotly = await import("plotly.js-dist-min");
+      const plotlyMod = await import("plotly.js/dist/plotly");
+      const Plotly = plotlyMod.default ?? plotlyMod;
       const imgData = await Plotly.toImage(el, { format: "png", width: 1200, height: 600, scale: 2 });
       if (plotFormat === "pdf") {
         const pdf = new jsPDF({ orientation: "landscape", unit: "px", format: [1200, 600] });
@@ -196,7 +196,12 @@ export default function VolcanoPlot({
         </p>
       )}
       <Plot
-        ref={plotRef}
+        onInitialized={(_figure, graphDiv) => {
+          graphDivRef.current = graphDiv;
+        }}
+        onUpdate={(_figure, graphDiv) => {
+          graphDivRef.current = graphDiv;
+        }}
         data={traces as Plotly.Data[]}
         layout={{
           width: undefined,

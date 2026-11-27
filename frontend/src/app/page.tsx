@@ -82,7 +82,7 @@ export default function LandingPage() {
   /* ── Hero Dashboard 响应式参数（基于视口宽度动态计算） ── */
   const [heroDash, setHeroDash] = useState({
     scale: 1.6, width: 1100, marginRight: -200,
-    rotateY: -15, rotateX: 10, textScale: 1,
+    rotateY: -15, rotateX: 10,
   });
 
   useEffect(() => {
@@ -105,7 +105,6 @@ export default function LandingPage() {
         marginRight: baseMR,
         rotateY: -12 + t * -3,
         rotateX: 8 + t * 2,
-        textScale: Math.min(1, vw / 1680),
       });
     };
     calc();
@@ -171,7 +170,7 @@ export default function LandingPage() {
             boxShadow: scrolled ? "0 1px 12px rgba(45,41,38,0.06)" : "none",
           }}
         >
-          <div className="px-8 lg:px-16 h-16 flex items-center justify-between">
+          <div className="px-4 sm:px-8 lg:px-16 h-16 flex items-center justify-between">
             <div className="flex items-center gap-4">
               <div className="flex items-center gap-2.5">
                 <div
@@ -211,7 +210,7 @@ export default function LandingPage() {
               </div>
             </div>
 
-            <div className="flex items-center gap-5">
+            <div className="flex items-center gap-3 sm:gap-5">
               {/* Repository Link */}
               <div className="flex items-center gap-4 mr-1" style={{ color: "var(--clr-dark-deep)" }}>
                 <a
@@ -227,11 +226,11 @@ export default function LandingPage() {
               </div>
 
               {/* Get Started (Guest Login) */}
-              <div className="flex items-center gap-2.5">
+              <div className="flex items-center gap-2 sm:gap-2.5">
                 <button
                   onClick={handleStart}
                   disabled={startLoading}
-                  className="px-4 py-[7px] text-[13px] font-medium rounded transition-all duration-300 disabled:opacity-60 cursor-pointer disabled:cursor-not-allowed"
+                  className="px-3 sm:px-4 py-[7px] text-[13px] font-medium rounded transition-all duration-300 disabled:opacity-60 cursor-pointer disabled:cursor-not-allowed whitespace-nowrap"
                   style={{
                     background: "transparent",
                     color: "var(--clr-amber)",
@@ -251,7 +250,7 @@ export default function LandingPage() {
                 {/* Login */}
                 <button
                   onClick={openLogin}
-                  className="px-5 py-[8px] text-[13px] font-medium rounded transition-all duration-300 cursor-pointer"
+                  className="px-3.5 sm:px-5 py-[8px] text-[13px] font-medium rounded transition-all duration-300 cursor-pointer whitespace-nowrap"
                   style={{
                     background: "rgba(200,96,25,0.1)",
                     color: "var(--clr-amber)",
@@ -280,18 +279,12 @@ export default function LandingPage() {
             style={{ background: "radial-gradient(circle, rgba(255,212,42,0.04) 0%, transparent 70%)" }} />
 
           {/* 全宽 flex 两栏 */}
-          <div className="relative z-10 w-full flex flex-col md:flex-row items-center" style={{ minHeight: 480 }}>
+          <div className="relative z-10 w-full max-w-[1680px] mx-auto flex flex-col lg:flex-row items-center gap-10 lg:gap-0" style={{ minHeight: 480 }}>
             {/* Left: Text — 左侧全宽 padding */}
-            <div
-              className="w-full md:w-[42%] shrink-0 px-8 lg:px-16"
-              style={{
-                transform: "translateY(-40px)",
-                zoom: heroDash.textScale,
-              }}
-            >
+            <div className="w-full lg:w-[45%] shrink-0 px-6 sm:px-8 lg:px-16">
               {/* Badge */}
               <div
-                className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full text-[15px] font-semibold mb-8 tracking-wide uppercase"
+                className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full text-xs sm:text-sm font-semibold mb-6 sm:mb-8 tracking-wide uppercase"
                 style={{
                   background: "rgba(194,105,61,0.08)",
                   color: "var(--clr-amber)",
@@ -305,12 +298,12 @@ export default function LandingPage() {
 
               {/* Title */}
               <h1
-                className="text-[3.5rem] md:text-[4rem] lg:text-[5rem] xl:text-[6rem] font-bold leading-[1.05] mb-8"
+                className="font-bold leading-[1.08] mb-6 sm:mb-8 sm:whitespace-nowrap"
                 style={{
                   fontFamily: "var(--font-display)",
                   color: "var(--clr-dark-deep)",
+                  fontSize: "clamp(2.15rem, 3.2vw + 0.5rem, 4.75rem)",
                   letterSpacing: "-0.04em",
-                  whiteSpace: "nowrap",
                   animation: "fadeUp 0.6s cubic-bezier(0.22,1,0.36,1) 0.05s both",
                 }}
               >
@@ -323,7 +316,7 @@ export default function LandingPage() {
 
               {/* Gold divider */}
               <div
-                className="w-20 h-[3px] mb-8"
+                className="w-20 h-[3px] mb-6 sm:mb-8"
                 style={{
                   background: "linear-gradient(90deg, var(--clr-amber), var(--clr-gold))",
                   animation: "fadeUp 0.6s cubic-bezier(0.22,1,0.36,1) 0.1s both",
@@ -332,10 +325,11 @@ export default function LandingPage() {
 
               {/* Subtitle */}
               <p
-                className="text-xl md:text-2xl mb-12 max-w-none md:whitespace-nowrap"
+                className="mb-10 sm:mb-12 max-w-xl"
                 style={{
                   fontFamily: "var(--font-sans)",
                   color: "var(--clr-text-muted)",
+                  fontSize: "clamp(1rem, 0.7vw + 0.8rem, 1.35rem)",
                   lineHeight: 1.8,
                   fontWeight: 400,
                   animation: "fadeUp 0.6s cubic-bezier(0.22,1,0.36,1) 0.15s both",
@@ -382,7 +376,7 @@ export default function LandingPage() {
 
             {/* Right: Dashboard Preview — flex 子元素，自然溢出右边界 */}
             <div
-              className="hidden md:flex flex-1 items-center justify-end relative"
+              className="hidden lg:flex flex-1 items-center justify-end relative"
               style={{
                 animation: "fadeIn 1s cubic-bezier(0.22,1,0.36,1) 0.3s both, float-y 6s ease-in-out infinite",
                 perspective: "1500px",

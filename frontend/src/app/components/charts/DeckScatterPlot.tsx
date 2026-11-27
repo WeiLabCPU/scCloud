@@ -15,7 +15,15 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { OrthographicView } from "@deck.gl/core";
 import { ScatterplotLayer } from "@deck.gl/layers";
 import DeckGL from "@deck.gl/react";
-import type { ScatterData } from "./ScatterPlot";
+
+export interface ScatterData {
+  x: number[];
+  y: number[];
+  cluster: string[];
+  celltype?: string[];
+  sample?: string[];
+  group?: string[];
+}
 
 /* ── 多色板（可切换） ── */
 const PALETTES: Record<string, { name: string; colors: [number, number, number][] }> = {
@@ -257,7 +265,7 @@ const LegendSidebar = memo(function LegendSidebar({
           <select
             value={paletteKey}
             onChange={(e) => setPaletteKey(e.target.value)}
-            className="text-[9px] px-1 py-0.5 rounded border-none"
+            className="text-[11px] px-1 py-0.5 rounded border-none"
             style={{ background: "transparent", color: "var(--clr-text-muted)", cursor: "pointer" }}
           >
             {Object.entries(PALETTES).map(([key, pal]) => (
@@ -324,7 +332,7 @@ const LegendSidebar = memo(function LegendSidebar({
                 >
                   {g.label}
                 </span>
-                <span className="text-[9px]" style={{ color: "var(--clr-text-faint)" }}>
+                <span className="text-[11px]" style={{ color: "var(--clr-text-faint)" }}>
                   {vals.length}
                 </span>
               </button>
@@ -394,7 +402,7 @@ const LegendSidebar = memo(function LegendSidebar({
                         >
                           {v}
                         </span>
-                        <span className="text-[9px] tabular-nums" style={{ color: "var(--clr-text-faint)" }}>
+                        <span className="text-[11px] tabular-nums" style={{ color: "var(--clr-text-faint)" }}>
                           {count.toLocaleString()}
                         </span>
                       </button>
@@ -791,7 +799,7 @@ export default function DeckScatterPlot({
 
       {/* 左下角信息 — Nature 风格极简 */}
       <div
-        className="absolute bottom-2 left-2 z-10 text-[10px] px-1.5 py-0.5"
+        className="absolute bottom-2 left-2 z-10 text-[11px] px-1.5 py-0.5"
         style={{
           color: "#999",
           background: "transparent",
