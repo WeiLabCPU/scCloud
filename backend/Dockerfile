@@ -9,6 +9,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && useradd --system --uid 10001 --gid app --home-dir /app --shell /usr/sbin/nologin app
 
 COPY . .
+# 可选：构建时指定 PyPI 镜像（如 https://mirrors.ustc.edu.cn/pypi/simple）
+ARG PIP_INDEX_URL
 RUN pip install --no-cache-dir -e . \
     && chmod +x /app/scripts/docker-entrypoint.sh \
     && mkdir -p /data/projects \

@@ -30,6 +30,13 @@ options(plumber.json.serializer = function(...) {
   jsonlite::toJSON(..., auto_unbox = TRUE, null = "null")
 })
 
+# 默认绘图设备重定向到本进程私有的 tempdir。
+# 背景：worker 每个任务起独立 R 进程，但会 setwd 到同一个 project_path；
+# 若某处代码未显式开图形设备就触发了绘图，R 会自动打开 pdf 设备写 "Rplots.pdf"，
+# 并发任务就会写同名文件互相踩踏，报 "cannot open file 'Rplots.pdf'"。
+# 每个 R 进程的 tempdir() 都是唯一的，重定向后即可彻底避免该冲突。
+options(device = function(...) grDevices::pdf(file = file.path(tempdir(), "Rplots.pdf")))
+
 # 加载进度报告工具 (唯一的新增基础设施代码)
 source("R/utils.R")
 
@@ -37,6 +44,7 @@ source("R/utils.R")
 source("R/data_processing.R")
 source("R/data_summary.R")
 source("R/data_plot.R")
+source("R/scenic.R")
 
 # 全局 Nature 主题（覆盖 Seurat DimPlot/VlnPlot 默认主题）
 tryCatch(theme_set(nature_theme()), error = function(e) message("theme_set skipped"))
@@ -1360,6 +1368,128 @@ function(req) {
       significant_terms = nrow(result$data)
     )),
     enrich_data = enrich_data
+  )
+}
+
+
+# ======================================================================
+# 6.5 SCENIC 转录因子调控分析
+#     调用: R/scenic.R::RunScenic()
+# ======================================================================
+
+#* SCENIC 转录因子 regulon 推断与活性评分
+#* @post /scenic
+function(req) {
+  body <- jsonlite::fromJSON(req$postBody)
+  project_path <- body$project_path
+  params <- body$params
+  plot_format <- params$plot_format %||% "png"
+  task_id <- params$task_id
+  report <- create_progress_reporter(task_id)
+
+  ref <- params$ref %||% "hg38"
+  n_cores <- as.integer(params$n_cores %||% 8)
+  max_cells <- as.numeric(params$max_cells %||% 5000)
+
+  # 依赖自检：缺包时给出明确提示，而不是崩在 library()
+  required_pkgs <- c("SCENIC", "RcisTarget", "GENIE3", "AUCell")
+  missing_pkgs <- required_pkgs[
+    !vapply(required_pkgs, requireNamespace, logical(1), quietly = TRUE)
+  ]
+  if (length(missing_pkgs) > 0) {
+    stop(paste0(
+      "SCENIC 依赖未安装：", paste(missing_pkgs, collapse = ", "),
+      "。请先安装上述 R 包，并把 cisTarget 数据库挂载到 /app/data/cistarget"
+    ))
+  }
+
+  report(3, "读取注释结果...")
+  rds_path <- file.path(project_path, "seurat_annotated.rds")
+  if (!file.exists(rds_path)) stop("未找到 seurat_annotated.rds，请先完成细胞注释步骤")
+  pro <- readRDS(rds_path)
+
+  # 输出目录：带时间戳，多次运行不覆盖
+  outdir <- file.path(
+    project_path,
+    paste0("scenic_output_", format(Sys.time(), "%Y%m%d%H%M%S", tz = "Asia/Shanghai"))
+  )
+  dir.create(outdir, recursive = TRUE, showWarnings = FALSE)
+
+  # 防止 R 在不可写目录生成 Rplots.pdf
+  old_wd <- getwd()
+  on.exit(setwd(old_wd), add = TRUE)
+  setwd(tempdir())
+
+  result <- RunScenic(
+    pro, outdir,
+    ref = ref,
+    nCores = n_cores,
+    maxCells = max_cells,
+    plot_format = plot_format,
+    dbDir = "/app/data/cistarget",
+    progress_callback = report
+  )
+
+  # 将对外文件归档到项目顶层：ZIP 会排除中间输出目录。
+  archive_result <- function(path, label, ext) {
+    if (is.null(path)) return(NULL)
+    target <- file.path(project_path, make_output_name(project_path, "10", "scenic", label, ext))
+    if (!file.rename(path, target)) stop("无法归档 SCENIC 结果: ", basename(path))
+    target
+  }
+  result$heatmap_path <- archive_result(result$heatmap_path, "auc_heatmap", plot_format)
+  result$bin_heatmap_path <- archive_result(result$bin_heatmap_path, "binary_heatmap", plot_format)
+  result$table_path <- archive_result(result$table_path, "regulons", "csv")
+  result$auc_matrix_path <- archive_result(result$auc_matrix_path, "regulon_auc", "csv")
+  result$bin_matrix_path <- archive_result(result$bin_matrix_path, "regulon_binary", "csv")
+
+  # 主图：regulon 活性 UMAP + 细胞类型 UMAP
+  plot_archive <- make_output_name(project_path, "10", "scenic", "regulon_umap", plot_format)
+  plot_path <- file.path(project_path, plot_archive)
+  open_plot_device(plot_path, 2400, 1400, plot_format, units = "px")
+  print(result$plot)
+  dev.off()
+
+  # 统计图：RidgePlot + VlnPlot
+  stat_archive <- make_output_name(project_path, "10", "scenic", "regulon_vln", plot_format)
+  stat_path <- file.path(project_path, stat_archive)
+  open_plot_device(stat_path, 2000, 1800, plot_format, units = "px")
+  print(result$stat_plot)
+  dev.off()
+
+  gc(verbose = FALSE)
+
+  safe_int <- function(x) {
+    if (is.null(x) || length(x) == 0L || is.na(x)) 0L else as.integer(x)
+  }
+
+  # 与其他步骤对齐：前端通用结果组件按 plot_paths / data_paths 字典渲染
+  plot_paths <- list(
+    regulon_umap   = plot_path,
+    regulon_vln    = stat_path,
+    auc_heatmap    = result$heatmap_path,
+    binary_heatmap = result$bin_heatmap_path
+  )
+  data_paths <- list(
+    regulon_table  = result$table_path,
+    regulon_auc    = result$auc_matrix_path,
+    regulon_binary = result$bin_matrix_path
+  )
+  # 单 regulon 等边界情况下，热图可能被跳过 → 只返回真实存在的文件
+  plot_paths <- plot_paths[!vapply(plot_paths, is.null, logical(1))]
+  data_paths <- data_paths[!vapply(data_paths, is.null, logical(1))]
+
+  list(
+    status = "success",
+    plot_paths = plot_paths,
+    data_paths = data_paths,
+    stats = list(
+      ref = ref,
+      n_regulons = safe_int(result$n_regulons),
+      n_cells = safe_int(result$n_cells),
+      n_cells_sub = safe_int(result$n_cells_sub)
+    ),
+    scenic_data = list(regulons = as.list(result$regulons))
   )
 }
 

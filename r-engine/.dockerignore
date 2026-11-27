@@ -1,0 +1,3 @@
+# cisTarget is mounted at runtime; never bake GB-scale databases into the image.
+data/cistarget/*
+!data/cistarget/README.md

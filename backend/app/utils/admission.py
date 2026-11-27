@@ -91,6 +91,7 @@ _W = {
     "cellchat":  (1.52, 0.073),
     "wgcna":     (2.85, 0.089),
     "infercnv":  (7.00, 1.000),   # 标定中, 取陡保守值
+    "scenic":    (3.00, 0.300),   # GENIE3 随机森林 + AUCell, 随基因/细胞数上升
     # 其余轻量子步骤
     "markers_pairwise": (1.5, 0.13),
     "subset_cluster":   (1.3, 0.09),
@@ -117,6 +118,7 @@ _WC = {
     "cellchat":  0.16,
     "wgcna":     0.22,
     "infercnv":  5.80,
+    "scenic":    0.30,
     "markers_pairwise": 0.26,
     "subset_cluster":   0.18,
     "merge_celltypes":  0.10,

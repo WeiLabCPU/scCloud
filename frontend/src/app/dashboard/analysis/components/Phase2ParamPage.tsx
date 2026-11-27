@@ -31,6 +31,7 @@ const DEFAULT_PARAMS = {
   cellchat: { species: "Human", db_use: "Secreted", thresh: 0.05, min_cells: 10, prob_method: "triMean", top_pathways: 1, remove_isolate: false, plot_format: "png" },
   infercnv: { cutoff_gene: 0.1, num_threads: 4, species: "Human", infer_df: [] as { cellType: string; refType: string }[], plot_format: "png" },
   wgcna: { interest_types: [] as string[], min_fraction: 0.05, sft_threshold: 0.8, module_score: "Seurat", k: 25, max_shared: 10, min_cells: 100, n_hubs: 10, n_genes_score: 25, plot_format: "png" },
+  scenic: { ref: "hg38", n_cores: 8, max_cells: 5000, plot_format: "png" },
 };
 
 /** 从 marker_table 推导 original_celltype -> celltype 的重命名映射（仅一对一） */
@@ -63,12 +64,27 @@ export default function Phase2ParamPage({ pipeline, token, onComplete, species =
     monocle: false,
     cellchat: false,
     infercnv: false,
+    scenic: false,
   });
   const [params, setParams] = useState(() => ({
     ...DEFAULT_PARAMS,
     cellchat: { ...DEFAULT_PARAMS.cellchat, species: normalizedSpecies },
     infercnv: { ...DEFAULT_PARAMS.infercnv, species: normalizedSpecies },
+    scenic: { ...DEFAULT_PARAMS.scenic, ref: normalizedSpecies === "Mouse" ? "mm10" : "hg38" },
   }));
+  const [scenicRefs, setScenicRefs] = useState<string[]>([]);
+  useEffect(() => {
+    let alive = true;
+    apiFetch<{ references: string[] }>("/api/datasets/scenic/references")
+      .then(({ references }) => {
+        if (!alive) return;
+        const refs = references.filter(ref => normalizedSpecies === "Mouse" ? ref.startsWith("mm") : ref.startsWith("hg"));
+        setScenicRefs(refs);
+        setParams(prev => ({ ...prev, scenic: { ...prev.scenic, ref: refs.includes(prev.scenic.ref) ? prev.scenic.ref : (refs[0] || "") } }));
+      })
+      .catch(() => { if (alive) setScenicRefs([]); });
+    return () => { alive = false; };
+  }, [normalizedSpecies]);
   const [showAdvanced, setShowAdvanced] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(false);
   // ── WGCNA 基因表达查询 ──
@@ -198,6 +214,11 @@ export default function Phase2ParamPage({ pipeline, token, onComplete, species =
       return;
     }
 
+    if (enabledSteps.includes("scenic") && !scenicRefs.includes(params.scenic.ref)) {
+      setError("当前物种尚未配置可用的 SCENIC 数据库，请联系管理员。");
+      return;
+    }
+
     if (enabledSteps.includes("infercnv")) {
       const hasRef = params.infercnv.infer_df.some(d => d.refType === "reference");
       if (!hasRef) {
@@ -292,6 +313,12 @@ export default function Phase2ParamPage({ pipeline, token, onComplete, species =
       label: "拷贝数变异分析",
       desc: "inferCNV — 基于基因表达推断 CNV（需标记参考细胞）",
       Icon: IconDNA,
+    },
+    {
+      key: "scenic",
+      label: "转录因子调控分析",
+      desc: "SCENIC — 推断转录因子 regulon 与细胞活性评分",
+      Icon: IconNetwork,
     },
   ];
 
@@ -463,6 +490,33 @@ export default function Phase2ParamPage({ pipeline, token, onComplete, species =
                         </select>
                       </div>
                     </div>
+                  </div>
+                )}
+
+                {/* scenic 参数 */}
+                {mod.key === "scenic" && (
+                  <div className="space-y-3">
+                    <div className="flex flex-wrap gap-x-4 gap-y-2">
+                      <div>
+                        <label className="block text-xs font-medium mb-1.5" style={{ color: "var(--clr-text-muted)" }}>参考基因组</label>
+                        <select disabled={scenicRefs.length === 0} value={params.scenic.ref} onChange={(e) => updateParam("scenic", "ref", e.target.value)} className={selectCls} style={selectStyle}>
+                          {scenicRefs.length === 0 && <option value="">未配置数据库</option>}
+                          {scenicRefs.map(ref => <option key={ref} value={ref}>{ref}</option>)}
+                        </select>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-4">
+                      <label className="text-xs">网络推断最大细胞数
+                        <NumberInput value={params.scenic.max_cells} min={100} max={20000} step={100} onChange={v => updateParam("scenic", "max_cells", v)} className={selectCls} style={selectStyle} />
+                      </label>
+                      <label className="text-xs">并行核数
+                        <NumberInput value={params.scenic.n_cores} min={1} max={64} step={1} onChange={v => updateParam("scenic", "n_cores", v)} className={selectCls} style={selectStyle} />
+                      </label>
+                    </div>
+                    <p className="text-[10px]" style={{ color: "var(--clr-text-faint)" }}>
+                      {scenicRefs.length ? "仅列出当前物种已挂载的参考数据库。" : "当前物种尚未配置 SCENIC 数据库，请联系管理员。"}
+                      网络推断默认最多抽样 5,000 个细胞；AUCell 对全部细胞评分，大样本仍需充足内存。
+                    </p>
                   </div>
                 )}
 
@@ -788,7 +842,7 @@ export default function Phase2ParamPage({ pipeline, token, onComplete, species =
       {/* 图片格式选择 */}
       <div className="flex items-center gap-2 px-3 py-2 rounded text-xs mb-3" style={{ background: "rgba(200,96,25,0.04)", border: "1px solid rgba(200,96,25,0.15)" }}>
         <span style={{ color: "var(--clr-text-muted)" }}>图片格式:</span>
-        <select value={(params.markers.plot_format as string) || "png"} onChange={(e) => { const v = e.target.value; setParams(prev => ({ markers: { ...prev.markers, plot_format: v }, enrich: { ...prev.enrich, plot_format: v }, monocle: { ...prev.monocle, plot_format: v }, cellchat: { ...prev.cellchat, plot_format: v }, infercnv: { ...prev.infercnv, plot_format: v }, wgcna: { ...prev.wgcna, plot_format: v } })); }} style={{ border: "1px solid var(--clr-border)", borderRadius: 4, padding: "2px 6px", fontSize: 12, background: "white", color: "var(--clr-text)" }}>
+        <select value={(params.markers.plot_format as string) || "png"} onChange={(e) => { const v = e.target.value; setParams(prev => ({ markers: { ...prev.markers, plot_format: v }, enrich: { ...prev.enrich, plot_format: v }, monocle: { ...prev.monocle, plot_format: v }, cellchat: { ...prev.cellchat, plot_format: v }, infercnv: { ...prev.infercnv, plot_format: v }, wgcna: { ...prev.wgcna, plot_format: v }, scenic: { ...prev.scenic, plot_format: v } })); }} style={{ border: "1px solid var(--clr-border)", borderRadius: 4, padding: "2px 6px", fontSize: 12, background: "white", color: "var(--clr-text)" }}>
           <option value="png">PNG (默认)</option>
           <option value="pdf">PDF</option>
           <option value="svg">SVG (矢量·可编辑)</option>

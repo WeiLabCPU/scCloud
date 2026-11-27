@@ -4,8 +4,11 @@
 # ===== Stage 1: 依赖安装 =====
 FROM node:20-alpine AS deps
 WORKDIR /app
+# 可选：构建时指定 npm 镜像（如 https://registry.npmmirror.com）
+ARG NPM_REGISTRY
 COPY package.json package-lock.json ./
-RUN npm ci --prefer-offline
+RUN if [ -n "$NPM_REGISTRY" ]; then npm config set registry "$NPM_REGISTRY"; fi \
+    && npm ci --prefer-offline
 
 # ===== Stage 2: 构建 =====
 FROM node:20-alpine AS builder

@@ -28,7 +28,7 @@ class TaskSubmit(BaseModel):
     project_id: int
     step: str = Field(
         ...,
-        pattern=r"^(qc|normalize|reduce|cluster|markers|enrich|annotate|convert|markers_pairwise|plot_markers|subset_cluster|marker_expr|merge_celltypes|monocle|cellchat|cellchat_pathway|infercnv|wgcna)$",
+        pattern=r"^(qc|normalize|reduce|cluster|markers|enrich|annotate|convert|markers_pairwise|plot_markers|subset_cluster|marker_expr|merge_celltypes|monocle|cellchat|cellchat_pathway|infercnv|wgcna|scenic)$",
     )
     params: dict = Field(default_factory=dict)
 
@@ -113,6 +113,7 @@ STEP_TIMEOUT_OVERRIDES = {
     "cellchat": 14400,  # 4 小时
     "monocle": 21600,   # 6 小时
     "wgcna": 21600,     # 6 小时
+    "scenic": 43200,    # 12 小时（Genie3 阶段极慢）
 }
 
 

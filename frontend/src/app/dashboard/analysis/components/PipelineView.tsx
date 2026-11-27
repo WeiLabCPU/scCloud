@@ -73,6 +73,7 @@ const STEPS = [
   { id: "wgcna", num: 7, label: "WGCNA分析", desc: "加权基因共表达网络", Icon: IconNetwork, subSteps: ["wgcna"] },
   { id: "monocle", num: 8, label: "拟时序分析", desc: "Monocle 2", Icon: IconBranch, subSteps: ["monocle"] },
   { id: "infercnv", num: 9, label: "拷贝数变异", desc: "inferCNV", Icon: IconDNA, subSteps: ["infercnv"] },
+  { id: "scenic", num: 10, label: "转录因子调控", desc: "SCENIC", Icon: IconNetwork, subSteps: ["scenic"] },
 ];
 
 const STATUS_DOT: Record<string, string> = {
@@ -283,7 +284,7 @@ export default function PipelineView({ pipelineId, token, projectName, projectSp
 
   // Phase 2 步骤是否已配置/执行
   const enabledPhase2 = (pipeline.params?.enabled_steps as string[]) || [];
-  const hasPhase2Tasks = (pipeline.tasks || []).some(t => ["monocle", "cellchat", "infercnv", "wgcna", "markers", "enrich"].includes(t.step));
+  const hasPhase2Tasks = (pipeline.tasks || []).some(t => ["monocle", "cellchat", "infercnv", "wgcna", "markers", "enrich", "scenic"].includes(t.step));
   const annotateCompleted = (pipeline.tasks || []).some((t) => t.step === "annotate" && t.status === "completed");
   // 始终显示所有步骤
   const visibleSteps = STEPS;
@@ -547,7 +548,7 @@ export default function PipelineView({ pipelineId, token, projectName, projectSp
             const isActive = activeStep === step.id;
             const dotCls = STATUS_DOT[st] || STATUS_DOT.pending;
             // Phase 2 步骤在 pipeline 暂停时也可点击（用于查看配置状态）
-            const isPhase2 = ["monocle", "cellchat", "infercnv", "wgcna"].includes(step.subSteps[0]);
+            const isPhase2 = ["monocle", "cellchat", "infercnv", "wgcna", "scenic"].includes(step.subSteps[0]);
             const isClickable = st === "completed" || st === "running" || st === "failed" || (isPhase2 && pipeline.status === "paused");
             const groupHeader = index === 0 ? "基础分析" : index === 3 ? "高级分析" : index === 7 ? "Beta" : null;
 

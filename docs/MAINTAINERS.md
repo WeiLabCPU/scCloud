@@ -190,3 +190,24 @@ sccloud/
 系统：`GET /api/health`，`WS /ws/tasks/{id}`。
 
 入口健康：桥接 `GET /healthz`（经 nginx）。
+
+## SCENIC 与本地构建
+
+SCENIC 的依赖安装现已纳入 `r-engine/Dockerfile`，包括 SCENIC、RcisTarget、GENIE3、AUCell、Arrow 和人/鼠注释包；构建末尾检查依赖是否可加载，缺包即失败。仍需按 Dockerfile 说明准备现有 `r-library/` 构建上下文。`SCENIC_REF` / `RCISTARGET_REF` 构建参数固定官方源码版本，升级时需验证 motif 注释与 feather 格式兼容性。
+
+R 镜像目前不由前后端发布 workflow 自动构建。合并 R 代码后，维护者仍须构建、验证并发布新 R 镜像，随后让 `R_ENGINE_IMAGE` 指向新标签并重建 `r-engine` 和 `r-engine-worker`。仅重启旧容器不会安装新依赖或更新代码。不要把“修改了 Dockerfile”视为“线上镜像已更新”。
+
+cisTarget 数据库需提前下载到 `r-engine/data/cistarget/`，步骤见[数据库说明](../r-engine/data/cistarget/README.md)。该目录在 compose 中同时挂载给 R API、worker 和后端；数据库不进入 Git 和镜像。小型内置 RDS 与各自 README 则纳入 Git，部署时由后端只读挂载分发。
+
+SCENIC 默认用最多 5,000 个细胞推断网络，参数页可调整；AUCell 仍对全部细胞评分，因此抽样不能保证大样本不会耗尽内存。核数按宿主可检测 CPU 数封顶，容器 CPU 配额和内存仍需管理员合理设置。
+
+前后端支持可选镜像源参数：
+
+```bash
+docker build --build-arg PIP_INDEX_URL=https://mirrors.ustc.edu.cn/pypi/simple -t sccloud-backend:local backend
+docker build --build-arg NPM_REGISTRY=https://registry.npmmirror.com -t sccloud-frontend:local frontend
+```
+
+`backend/Dockerfile.local` 仅用于基于已有后端镜像更新应用与 Alembic 迁移。Python 依赖变化时请使用标准 `backend/Dockerfile` 重建。
+
+标准 compose 保持 `init: true`，用于回收 R 子进程。rootless Podman 若报告缺少 `catatonit`，应由宿主机管理员安装它。确有需要时，可在个人 override 文件中为受影响服务设置 `init: false`，并在本机验证进程回收；不要修改公共 compose 的默认值。

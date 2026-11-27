@@ -1,0 +1,9 @@
+# 本地派生镜像：仅更新后端应用代码（Python 依赖未变化时使用，免去 apt/pip 重建）
+# 构建：docker build -f backend/Dockerfile.local -t localhost/sccloud-backend:1.1.0-local backend
+FROM ghcr.io/cangiolo/sccloud-backend:latest
+USER root
+COPY app/ /app/app/
+COPY alembic.ini /app/alembic.ini
+COPY alembic/ /app/alembic/
+RUN chown -R app:app /app/app
+USER app
