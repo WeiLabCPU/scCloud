@@ -75,10 +75,7 @@ async def _run_steps(pipeline_id: str, steps: List[str], db: Session, pipeline: 
     sequential_steps = [s for s in steps if s not in PARALLEL_PHASE2]
     parallel_steps = [s for s in steps if s in PARALLEL_PHASE2]
 
-    # 先执行顺序步骤（失败后继续执行剩余步骤）
-    failed_steps = []
-    first_error_step = None
-    first_error_msg = None
+    # 顺序执行步骤：任一步失败立即中止，后续步骤不再执行
     for step in sequential_steps:
         r_steps = [step]
         if step == "reduce":
@@ -133,20 +130,22 @@ async def _run_steps(pipeline_id: str, steps: List[str], db: Session, pipeline: 
 
                 ok = await _execute_step(db, pipeline, r_step, step_params)
                 if not ok:
-                    failed_steps.append(r_step)
-                    if first_error_step is None:
-                        first_error_step = r_step
-                        db.refresh(pipeline)
-                        first_error_msg = pipeline.error_msg or f"步骤 {r_step} 执行失败"
-                    logger.warning(f"Pipeline {pipeline_id}: step {r_step} failed, continuing with next step")
+                    db.refresh(pipeline)
+                    pipeline.status = "failed"
+                    pipeline.error_step = r_step
+                    pipeline.error_msg = pipeline.error_msg or f"步骤 {r_step} 执行失败"
+                    db.commit()
+                    logger.error(f"Pipeline {pipeline_id}: step {r_step} failed, stopping pipeline")
+                    return False
 
             except Exception as e:
                 logger.exception(f"Pipeline {pipeline_id}: error in step {r_step}: {e}")
-                failed_steps.append(r_step)
-                if first_error_step is None:
-                    first_error_step = r_step
-                    first_error_msg = str(e)
-                logger.warning(f"Pipeline {pipeline_id}: step {r_step} raised exception, continuing with next step")
+                pipeline.status = "failed"
+                pipeline.error_step = r_step
+                pipeline.error_msg = str(e)
+                db.commit()
+                logger.error(f"Pipeline {pipeline_id}: step {r_step} raised exception, stopping pipeline")
+                return False
 
     # 并行执行剩余步骤
     if parallel_steps:
@@ -178,15 +177,6 @@ async def _run_steps(pipeline_id: str, steps: List[str], db: Session, pipeline: 
 
         db.refresh(pipeline)
         logger.info(f"Pipeline {pipeline_id}: all parallel steps completed")
-
-    # 检查是否有失败的步骤
-    if failed_steps:
-        pipeline.status = "failed"
-        pipeline.error_step = first_error_step
-        pipeline.error_msg = first_error_msg or f"步骤失败: {', '.join(failed_steps)}"
-        db.commit()
-        logger.error(f"Pipeline {pipeline_id}: failed steps: {failed_steps}")
-        return False
 
     return True
 
